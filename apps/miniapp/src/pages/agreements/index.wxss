@@ -1,0 +1,7 @@
+.page { padding: 24rpx; }
+.card { background: #fff; border-radius: 20rpx; padding: 28rpx; margin-bottom: 20rpx; }
+.title { font-size: 32rpx; font-weight: 600; color: #19352f; }
+.meta, .empty { color: #718078; margin-top: 12rpx; }
+.actions { display: flex; align-items: center; gap: 18rpx; margin-top: 24rpx; }
+.actions button { margin: 0; }
+.accepted { color: #0f8f78; }

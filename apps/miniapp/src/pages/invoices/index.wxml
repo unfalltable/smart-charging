@@ -1,0 +1,4 @@
+<view class="page">
+  <form class="card form" bindsubmit="submit"><text class="title">申请电子发票</text><picker range="{{orders}}" range-key="orderNo" value="{{orderIndex}}" bindchange="chooseOrder"><view class="input">{{orders.length ? orders[orderIndex].orderNo : '暂无可开票订单'}}</view></picker><input name="title" placeholder="发票抬头" required/><input name="taxNumber" placeholder="税号（个人可不填）"/><input name="email" type="text" placeholder="接收邮箱" required/><button class="primary" form-type="submit" disabled="{{orders.length === 0}}">提交申请</button></form>
+  <view class="section-title">开票记录</view><view wx:for="{{invoices}}" wx:key="id" class="card invoice"><view><text>{{item.title}}</text><text>{{item.status}}</text></view><text>{{item.email}}</text><text wx:if="{{item.invoiceUrl}}" class="link">电子发票已生成</text></view>
+</view>

@@ -1,0 +1,94 @@
+name: smart-charging-v2
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: charging
+      POSTGRES_USER: charging_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U charging_app -d charging"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:9-alpine
+    command: ["valkey-server", "--appendonly", "yes", "--requirepass", "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.12-alpine
+    command: ["--jetstream", "--store_dir=/data", "--http_port=8222"]
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  core:
+    build:
+      context: ..
+      dockerfile: ops/core.Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DATABASE_URL: jdbc:postgresql://postgres:5432/charging
+      DATABASE_USER: charging_app
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      NATS_URL: nats://nats:4222
+      VALKEY_HOST: valkey
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+      DEVICE_CREDENTIAL_MASTER_KEY_BASE64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64}
+      QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  device-gateway:
+    build:
+      context: ..
+      dockerfile: ops/device-gateway.Dockerfile
+    environment:
+      DEVICE_TLS_ENABLED: "false"
+      DEVICE_GATEWAY_PORT: "9000"
+      VALKEY_HOST: valkey
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+      NATS_URL: nats://nats:4222
+      GATEWAY_DEVICE_SECRETS_PILE001: ${PILOT_DEVICE_SECRET:?PILOT_DEVICE_SECRET is required}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    depends_on:
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  valkey-data:
+  nats-data:

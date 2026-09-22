@@ -1,0 +1,31 @@
+{
+  "pages": [
+    "pages/home/index",
+    "pages/charge/index",
+    "pages/orders/index",
+    "pages/account/index",
+    "pages/wallet/index",
+    "pages/invoices/index",
+    "pages/agreements/index",
+    "pages/webview/index",
+    "pages/support/index"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#0f766e",
+    "navigationBarTitleText": "安心充电",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f4f7f6"
+  },
+  "tabBar": {
+    "color": "#7b8794",
+    "selectedColor": "#0f8f78",
+    "backgroundColor": "#ffffff",
+    "list": [
+      { "pagePath": "pages/home/index", "text": "充电" },
+      { "pagePath": "pages/orders/index", "text": "订单" },
+      { "pagePath": "pages/account/index", "text": "我的" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

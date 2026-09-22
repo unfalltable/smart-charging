@@ -1,0 +1,82 @@
+spring:
+  application:
+    name: smart-charging-core
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/charging}
+    username: ${DATABASE_USER:charging_app}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:20}
+      minimum-idle: ${DATABASE_POOL_MIN_IDLE:2}
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+    validate-migration-naming: true
+  task:
+    scheduling:
+      pool:
+        size: 4
+  data:
+    redis:
+      host: ${VALKEY_HOST:localhost}
+      port: ${VALKEY_PORT:6379}
+      password: ${VALKEY_PASSWORD:}
+      timeout: 2s
+      ssl:
+        enabled: ${VALKEY_TLS_ENABLED:false}
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+  tomcat:
+    max-http-form-post-size: 1MB
+    max-swallow-size: 1MB
+charging:
+  qr-signing-secret: ${QR_SIGNING_SECRET}
+  security:
+    app-issuer: ${APP_JWT_ISSUER:https://api.example.invalid}
+    app-jwt-secret-base64: ${AUTH_JWT_SECRET_BASE64}
+    oidc-issuer-uri: ${OIDC_ISSUER_URI}
+    api-audience: ${API_JWT_AUDIENCE:smart-charging-api}
+    access-token-minutes: ${ACCESS_TOKEN_MINUTES:15}
+    refresh-token-days: ${REFRESH_TOKEN_DAYS:30}
+  identity:
+    wechat:
+      app-id: ${WECHAT_APP_ID:}
+      app-secret: ${WECHAT_APP_SECRET:}
+      tenant-code: ${WECHAT_TENANT_CODE:}
+  notification:
+    wechat:
+      enabled: ${WECHAT_NOTIFICATION_ENABLED:false}
+      templates-json: ${WECHAT_NOTIFICATION_TEMPLATES_JSON:{}}
+  web:
+    allowed-origins: ${ALLOWED_ORIGINS:}
+  rate-limit:
+    default-per-minute: ${RATE_LIMIT_DEFAULT_PER_MINUTE:600}
+    public-per-minute: ${RATE_LIMIT_PUBLIC_PER_MINUTE:120}
+    login-per-minute: ${RATE_LIMIT_LOGIN_PER_MINUTE:20}
+  device-credentials:
+    master-key-base64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64:}
+nats:
+  url: ${NATS_URL:nats://localhost:4222}
+outbox:
+  publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:250}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLE_RATE:0.1}
+logging:
+  level:
+    io.smartcharge.platform: ${APPLICATION_LOG_LEVEL:INFO}

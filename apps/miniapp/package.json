@@ -1,0 +1,9 @@
+{
+  "name": "@smartcharge/wechat-miniapp",
+  "version": "2.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "check": "node scripts/check.mjs"
+  }
+}

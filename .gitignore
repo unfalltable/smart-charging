@@ -1,0 +1,39 @@
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Java / Maven build outputs
+**/target/
+*.class
+*.jar
+*.war
+*.pid
+hs_err_pid*
+
+# JavaScript dependencies and build outputs
+**/node_modules/
+**/dist/
+
+# Local environment and developer-only configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+/apps/miniapp/project.private.config.json
+
+# Runtime data and logs
+*.log
+/logs/
+/uploadPath/
+
+# Temporary and backup files
+.tools/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~

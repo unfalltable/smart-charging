@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smart-charging-runtime
+  namespace: smart-charging
+data:
+  DATABASE_URL: jdbc:postgresql://postgres.example.invalid:5432/charging?sslmode=verify-full
+  DATABASE_USER: charging_runtime
+  NATS_URL: tls://nats.example.invalid:4222
+  VALKEY_HOST: valkey.example.invalid
+  VALKEY_PORT: "6379"
+  VALKEY_TLS_ENABLED: "true"
+  APP_JWT_ISSUER: https://api.example.invalid
+  OIDC_ISSUER_URI: https://identity.example.invalid/
+  API_JWT_AUDIENCE: smart-charging-api
+  WECHAT_TENANT_CODE: pilot
+  WECHAT_NOTIFICATION_ENABLED: "false"
+  WECHAT_NOTIFICATION_TEMPLATES_JSON: "{}"
+  ALLOWED_ORIGINS: https://console.example.invalid
+  DEVICE_TLS_ENABLED: "true"
+  DEVICE_TLS_CERTIFICATE: /run/secrets/device-tls/tls.crt
+  DEVICE_TLS_PRIVATE_KEY: /run/secrets/device-tls/tls.key
+  DEVICE_TLS_TRUST_CERTIFICATES: /run/secrets/device-tls/ca.crt
+  WECHAT_PRIMARY_PRIVATE_KEY_PATH: /run/secrets/wechat-pay/merchant-private-key.pem
+  WECHAT_PRIMARY_PUBLIC_KEY_PATH: /run/secrets/wechat-pay/wechat-pay-public-key.pem
+
+# Create smart-charging-secrets through the deployment platform, never by committing it.
+# Required keys: DATABASE_PASSWORD, VALKEY_PASSWORD, QR_SIGNING_SECRET,
+# AUTH_JWT_SECRET_BASE64, WECHAT_APP_ID, WECHAT_APP_SECRET,
+# DEVICE_CREDENTIAL_MASTER_KEY_BASE64 and the non-file WECHAT_PRIMARY_* payment keys.
+# Create separate wechat-pay-files and device-gateway-tls Kubernetes Secrets for PEM files.

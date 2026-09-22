@@ -1,0 +1,11 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="loading">正在读取充电位…</view>
+  <view wx:elif="{{connector}}" class="card detail">
+    <text class="station">{{connector.stationName}}</text><text class="port">{{connector.connectorNo}} 号充电位</text>
+    <view class="row"><text>设备编号</text><text>{{connector.deviceCode}}</text></view>
+    <view class="row"><text>计费规则</text><text>{{connector.priceText}}</text></view>
+    <view class="row"><text>当前状态</text><text class="{{available ? 'ok' : ''}}">{{available ? '可用' : '暂不可用'}}</text></view>
+    <view class="safety">启动前请确认充电器、电池与插座无破损、无进水。</view>
+    <button class="primary start" disabled="{{!available}}" loading="{{starting}}" bindtap="startCharging">确认并启动</button>
+  </view>
+</view>

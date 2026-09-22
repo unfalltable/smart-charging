@@ -1,0 +1,13 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="empty">正在加载…</view>
+  <view wx:elif="{{!agreements.length}}" class="empty">暂无待签署协议</view>
+  <view wx:for="{{agreements}}" wx:key="id" class="card">
+    <view class="title">{{item.title}}</view>
+    <view class="meta">版本 {{item.version}}</view>
+    <view class="actions">
+      <button size="mini" data-url="{{item.contentUrl}}" bindtap="open">查看全文</button>
+      <button wx:if="{{!item.accepted}}" size="mini" type="primary" data-id="{{item.id}}" bindtap="accept">同意</button>
+      <text wx:else class="accepted">已同意</text>
+    </view>
+  </view>
+</view>

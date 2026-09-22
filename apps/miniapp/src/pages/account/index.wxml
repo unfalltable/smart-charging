@@ -1,0 +1,13 @@
+<view class="page">
+  <view class="card profile">
+    <view class="avatar">⚡</view><text class="name">{{loggedIn ? '充电用户' : '未登录'}}</text>
+    <text class="hint">登录后可查看订单与发票</text>
+    <button wx:if="{{!loggedIn}}" class="primary login" loading="{{loggingIn}}" bindtap="login">微信登录</button>
+  </view>
+  <view class="card menu">
+    <view bindtap="openWallet">余额与支付记录<text>›</text></view><view bindtap="openInvoices">发票管理<text>›</text></view>
+    <view bindtap="openAgreements">服务协议与隐私政策<text>›</text></view>
+    <view bindtap="openSupport">客服与故障上报<text>›</text></view>
+  </view>
+  <button wx:if="{{loggedIn}}" class="logout" bindtap="logout">退出登录</button>
+</view>

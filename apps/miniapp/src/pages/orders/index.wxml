@@ -1,0 +1,11 @@
+<view class="page">
+  <view wx:if="{{!loading && orders.length === 0}}" class="empty">还没有充电订单</view>
+  <view wx:for="{{orders}}" wx:key="orderId" class="card order">
+    <view class="head"><text>{{item.stationName}}</text><text class="status">{{item.status}}</text></view>
+    <text class="meta">{{item.connectorNo}} 号位 · {{item.orderNo}}</text>
+    <view class="numbers"><text>{{item.energyKwh}} kWh</text><text class="amount">¥ {{item.amountYuan}}</text></view>
+    <text wx:if="{{item.paidAmountMinor > 0}}" class="paid">已支付 ¥ {{item.paidYuan}}</text>
+    <button wx:if="{{item.canStop}}" class="stop" data-order-id="{{item.orderId}}" bindtap="stopOrder">停止充电</button>
+    <button wx:if="{{item.canPay}}" class="primary pay" data-order-id="{{item.orderId}}" bindtap="payOrder">立即支付</button>
+  </view>
+</view>

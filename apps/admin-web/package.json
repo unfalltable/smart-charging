@@ -1,0 +1,25 @@
+{
+  "name": "@smartcharge/admin-web",
+  "version": "2.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "element-plus": "2.14.6",
+    "pinia": "4.0.3",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.2",
+    "@vitejs/plugin-vue": "6.0.9",
+    "lodash": "4.18.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.0",
+    "vue-tsc": "3.3.11"
+  }
+}

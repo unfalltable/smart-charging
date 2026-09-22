@@ -1,0 +1,6 @@
+<view class="page">
+  <view wx:if="{{wallet}}" class="balance"><text>账户余额</text><strong>¥ {{wallet.balanceYuan}}</strong><small>{{wallet.status}}</small></view>
+  <view class="section-title">支付记录</view>
+  <view wx:if="{{!loading && payments.length === 0}}" class="empty">暂无支付记录</view>
+  <view wx:for="{{payments}}" wx:key="id" class="card payment"><view><text>{{item.orderNo}}</text><text class="status">{{item.status}}</text></view><view><text>{{item.channel}}</text><strong>¥ {{item.amountYuan}}</strong></view></view>
+</view>

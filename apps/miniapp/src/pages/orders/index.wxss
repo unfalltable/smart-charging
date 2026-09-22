@@ -1,0 +1,4 @@
+.empty { text-align:center;margin-top:220rpx;color:#8a9793; }.order { margin-bottom:22rpx;padding:30rpx; }.head,.numbers { display:flex;justify-content:space-between; }.head { font-size:29rpx;font-weight:700; }.status { color:#0f8f78;font-size:24rpx; }.meta { display:block;color:#899590;font-size:22rpx;margin:14rpx 0 32rpx; }.numbers { align-items:flex-end;color:#697773; }.amount { font-size:34rpx;color:#17231f;font-weight:700; }
+.stop { margin-top:28rpx;border:1rpx solid #d25757;color:#b23d3d;background:#fff;border-radius:999rpx;font-size:26rpx; }
+.paid { display:block;text-align:right;color:#77857f;font-size:22rpx;margin-top:10rpx; }
+.pay { margin-top:24rpx; }

@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: smart-charging-device-gateway
+  data:
+    redis:
+      host: ${VALKEY_HOST:localhost}
+      port: ${VALKEY_PORT:6379}
+      password: ${VALKEY_PASSWORD}
+      timeout: 2s
+      ssl:
+        enabled: ${VALKEY_TLS_ENABLED:false}
+gateway:
+  port: ${DEVICE_GATEWAY_PORT:9000}
+  max-frame-length: ${DEVICE_MAX_FRAME_LENGTH:65536}
+  allowed-clock-skew: 2m
+  nonce-ttl: 10m
+  device-secrets: {}
+  credentials:
+    provider: ${DEVICE_CREDENTIAL_PROVIDER:configuration}
+    master-key-base64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64:}
+    cache-ttl: ${DEVICE_CREDENTIAL_CACHE_TTL:2m}
+  tls:
+    enabled: ${DEVICE_TLS_ENABLED:true}
+    certificate-chain: ${DEVICE_TLS_CERTIFICATE:}
+    private-key: ${DEVICE_TLS_PRIVATE_KEY:}
+    trust-certificates: ${DEVICE_TLS_TRUST_CERTIFICATES:}
+nats:
+  url: ${NATS_URL:nats://localhost:4222}
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9001}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true

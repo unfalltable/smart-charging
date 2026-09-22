@@ -1,0 +1,5 @@
+page { background: #f4f7f6; color: #152522; font-family: "PingFang SC", sans-serif; }
+button::after { border: 0; }
+.page { min-height: 100vh; padding: 30rpx; box-sizing: border-box; }
+.card { background: #fff; border-radius: 24rpx; box-shadow: 0 10rpx 34rpx rgba(20, 61, 54, .07); }
+.primary { background: #0f8f78; color: #fff; border-radius: 999rpx; font-weight: 700; }

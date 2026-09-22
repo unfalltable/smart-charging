@@ -1,0 +1,1 @@
+{ "desc": "Charging service pages", "rules": [{ "action": "disallow", "page": "*" }] }

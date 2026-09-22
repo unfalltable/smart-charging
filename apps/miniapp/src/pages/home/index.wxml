@@ -1,0 +1,15 @@
+<view class="page home">
+  <view class="hero">
+    <text class="eyebrow">SMART CHARGING</text>
+    <text class="title">扫码，即刻充电</text>
+    <text class="subtitle">安全计费 · 实时状态 · 自动结算</text>
+    <view class="energy"><view class="bolt">⚡</view></view>
+    <button class="primary scan" loading="{{scanning}}" bindtap="scanToCharge">扫描充电桩二维码</button>
+  </view>
+  <view class="steps card">
+    <view><text class="number">01</text><text>扫码选端口</text></view>
+    <view><text class="number">02</text><text>确认价格</text></view>
+    <view><text class="number">03</text><text>启动充电</text></view>
+  </view>
+  <view class="notice">请勿使用破损插座；发现异味、冒烟或异常升温请立即停止充电。</view>
+</view>
