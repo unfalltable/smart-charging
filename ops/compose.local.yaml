@@ -1,4 +1,4 @@
-name: smart-charging-v2
+name: smart-charging-local
 
 services:
   postgres:
@@ -8,39 +8,55 @@ services:
       POSTGRES_USER: charging_app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U charging_app -d charging"]
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    mem_limit: 768m
 
   valkey:
     image: valkey/valkey:9-alpine
-    command: ["valkey-server", "--appendonly", "yes", "--requirepass", "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}"]
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}
+    command:
+      [
+        "valkey-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${VALKEY_PASSWORD:?VALKEY_PASSWORD is required}",
+      ]
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
     volumes:
       - valkey-data:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "VALKEYCLI_AUTH=$${VALKEY_PASSWORD} valkey-cli ping | grep -q PONG",
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    mem_limit: 256m
 
   nats:
     image: nats:2.12-alpine
     command: ["--jetstream", "--store_dir=/data", "--http_port=8222"]
     ports:
-      - "127.0.0.1:4222:4222"
-      - "127.0.0.1:8222:8222"
+      - "127.0.0.1:${NATS_PORT:-4222}:4222"
+      - "127.0.0.1:${NATS_MONITOR_PORT:-8222}:8222"
     volumes:
       - nats-data:/data
     restart: unless-stopped
+    mem_limit: 256m
 
   core:
     build:
@@ -51,13 +67,18 @@ services:
       DATABASE_URL: jdbc:postgresql://postgres:5432/charging
       DATABASE_USER: charging_app
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      DATABASE_POOL_SIZE: "10"
+      DATABASE_POOL_MIN_IDLE: "2"
       NATS_URL: nats://nats:4222
       VALKEY_HOST: valkey
       VALKEY_PASSWORD: ${VALKEY_PASSWORD}
-      DEVICE_CREDENTIAL_MASTER_KEY_BASE64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64}
+      DEVICE_CREDENTIAL_MASTER_KEY_BASE64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64:?DEVICE_CREDENTIAL_MASTER_KEY_BASE64 is required}
       QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?QR_SIGNING_SECRET is required}
+      AUTH_JWT_SECRET_BASE64: ${AUTH_JWT_SECRET_BASE64:?AUTH_JWT_SECRET_BASE64 is required}
+      APPLICATION_LOG_LEVEL: INFO
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75.0
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${CORE_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +87,10 @@ services:
       valkey:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: 1024m
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
 
   device-gateway:
     build:
@@ -74,19 +99,78 @@ services:
     environment:
       DEVICE_TLS_ENABLED: "false"
       DEVICE_GATEWAY_PORT: "9000"
+      MANAGEMENT_PORT: "9001"
+      DEVICE_CREDENTIAL_PROVIDER: configuration
       VALKEY_HOST: valkey
       VALKEY_PASSWORD: ${VALKEY_PASSWORD}
       NATS_URL: nats://nats:4222
       GATEWAY_DEVICE_SECRETS_PILE001: ${PILOT_DEVICE_SECRET:?PILOT_DEVICE_SECRET is required}
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75.0
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:${DEVICE_GATEWAY_PORT:-9000}:9000"
+      - "127.0.0.1:${DEVICE_MANAGEMENT_PORT:-9001}:9001"
     depends_on:
       valkey:
         condition: service_healthy
       nats:
         condition: service_started
     restart: unless-stopped
+    mem_limit: 512m
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+
+  bootstrap:
+    image: postgres:18-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: charging
+      PGUSER: charging_app
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./pilot-12-port.sql:/bootstrap/pilot-12-port.sql:ro
+    command:
+      ["psql", "--set=ON_ERROR_STOP=1", "--file=/bootstrap/pilot-12-port.sql"]
+    depends_on:
+      core:
+        condition: service_healthy
+    restart: "no"
+    mem_limit: 128m
+
+  admin-web:
+    build:
+      context: ..
+      dockerfile: ops/admin-web.Dockerfile
+      args:
+        VITE_API_BASE: /api/v1
+        VITE_LOCAL_MODE: "true"
+    ports:
+      - "127.0.0.1:${ADMIN_WEB_PORT:-8088}:8080"
+    depends_on:
+      core:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 128m
+
+  simulator:
+    build:
+      context: ..
+      dockerfile: ops/simulator.Dockerfile
+    environment:
+      DEVICE_GATEWAY_HOST: device-gateway
+      DEVICE_GATEWAY_PORT: "9000"
+      PILOT_DEVICE_CODE: PILE001
+      PILOT_DEVICE_SECRET: ${PILOT_DEVICE_SECRET}
+    depends_on:
+      device-gateway:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 128m
 
 volumes:
   postgres-data:

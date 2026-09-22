@@ -11,7 +11,7 @@ if ([string]::IsNullOrWhiteSpace($secret)) {
     }
 }
 if ([string]::IsNullOrWhiteSpace($secret) -or $secret.Length -lt 32) {
-    throw 'Set QR_SIGNING_SECRET to at least 32 characters in the environment or .env file'
+    throw 'Set QR_SIGNING_SECRET to at least 32 characters in the environment or an environment file.'
 }
 $payload = "sc1.$tenantId.$connectorId"
 $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($secret))

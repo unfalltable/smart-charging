@@ -19,7 +19,22 @@
 - 设备密钥在线生成与轮换，AES-256-GCM 加密存入 Valkey，网关跨实例读取并短时缓存。
 - 一台 12 口桩的本地试点数据脚本。
 
-## 本机验证
+## Docker 一键运行
+
+电脑只需安装并启动 Docker Desktop，不需要安装 Java、Maven、Node.js 或数据库。双击根目录的 `docker-start.cmd`，等待脚本提示服务就绪后，打开 `http://localhost:8088`：
+
+```powershell
+.\docker-start.cmd
+.\docker-demo.cmd
+```
+
+第二个命令会通过容器内的 12 口模拟桩，自动跑通下单、启动、计量、停止计费和本地模拟支付。停止时运行 `.\docker-stop.cmd`；需要连同本地数据一起清空时运行 `.\docker-stop.cmd -DeleteData`。
+
+微信小程序必须在微信开发者工具或微信客户端中运行，不能运行在 Docker 容器里；其 API、数据库、消息系统和模拟设备均已容器化。详细端口、真机联调与故障排查见 [docs/docker-local.md](docs/docker-local.md)。
+
+本地 profile 会关闭 OIDC/API 鉴权并启用模拟支付，只能绑定本机回环地址用于开发联调，严禁用于公网。
+
+## 源码验证
 
 项目要求 Java 21 和 Maven 3.9.9 以上。仓库中的 `.tools` 仅是本机忽略目录，不会提交。
 
@@ -27,26 +42,6 @@
 $env:JAVA_HOME=(Resolve-Path '.tools\jdk-21.0.12.1+1').Path
 .\.tools\apache-maven-3.9.16\bin\mvn.cmd -B -ntp clean verify
 ```
-
-安装 Docker 后，可复制 `.env.example` 为 `.env`，替换所有密码，再启动本地基础设施和应用：
-
-```powershell
-docker compose --env-file .env -f ops/compose.local.yaml up -d --build
-.\ops\bootstrap-pilot.ps1
-```
-
-生成 1 号充电位的本地签名二维码内容，并启动模拟桩：
-
-```powershell
-.\ops\generate-pilot-qr.ps1
-$env:PILOT_DEVICE_SECRET='与 .env 相同的设备密钥'
-npm run simulate:device
-```
-
-把生成内容制作成测试二维码，或用 [ops/pilot-create-order.http](ops/pilot-create-order.http) 直接创建订单。
-模拟桩会自动确认启动、上报 5 次计量数据并结束会话，用于验证订单闭环。
-
-本地 profile 只用于开发联调，会关闭 API 身份认证和设备 mTLS。生产环境不得启用 `local` profile。
 
 需要营业资质、商户号、真实域名、证书和桩厂协议的工作没有伪造配置；所需外部材料见
 [docs/external-inputs.md](docs/external-inputs.md)。在这些材料到位并完成真机/真实商户验收前，代码通过不代表可以公开收费运营。
