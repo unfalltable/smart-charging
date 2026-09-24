@@ -24,6 +24,8 @@ gateway:
     certificate-chain: ${DEVICE_TLS_CERTIFICATE:}
     private-key: ${DEVICE_TLS_PRIVATE_KEY:}
     trust-certificates: ${DEVICE_TLS_TRUST_CERTIFICATES:}
+server:
+  port: ${MANAGEMENT_PORT:9001}
 nats:
   url: ${NATS_URL:nats://localhost:4222}
 management:

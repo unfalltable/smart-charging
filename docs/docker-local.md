@@ -64,3 +64,15 @@
 ```
 
 `.env.docker` 只保存在本机并被 Git 忽略。不要把本机演示模式、其中的密钥或关闭鉴权的 `local` profile 用于公网生产环境。
+
+## 启动回归验证
+
+Windows PowerShell 5.1 下可运行脚本回归测试（不需要 Docker）：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ops/tests/local-scripts.test.ps1
+```
+
+此测试校验二维码签名、订单 `orderId` 字段、模拟支付流程，以及支付未到账时拒绝报告成功；API 使用测试替身。后端 `mvn verify` 中的启动测试会实际启动 HTTP 服务并请求 readiness，网关还会验证 TCP 端口能连接；数据库和消息代理使用测试替身。
+
+GitHub Actions 的 `docker-smoke` 任务负责构建并启动整套 Compose，再连续执行两次充电及模拟支付、检查管理后台及反向代理。只有该任务通过，或本机实际完成 `docker-start.cmd` 和 `docker-demo.cmd`，才代表完整容器流程验证通过。

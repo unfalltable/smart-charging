@@ -11,6 +11,7 @@ import java.util.HexFormat;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public final class DeviceMessageVerifier {
@@ -19,6 +20,7 @@ public final class DeviceMessageVerifier {
     private final GatewayProperties properties;
     private final Clock clock;
 
+    @Autowired
     public DeviceMessageVerifier(DeviceCredentialProvider credentials, NonceGuard nonceGuard,
                                  GatewayProperties properties) {
         this(credentials, nonceGuard, properties, Clock.systemUTC());

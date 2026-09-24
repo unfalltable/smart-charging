@@ -83,9 +83,8 @@ try {
             } | Select-Object -First 1)
             $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $simulatorOnline
         }
-        catch {
-            Start-Sleep -Seconds 2
-        }
+        catch { $ready = $false }
+        if (-not $ready) { Start-Sleep -Seconds 2 }
     } while (-not $ready -and [DateTime]::UtcNow -lt $deadline)
 
     if (-not $ready) {

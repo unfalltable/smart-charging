@@ -1,8 +1,10 @@
-param([int]$TimeoutSeconds = 60)
+param(
+    [ValidateRange(1, 600)][int]$TimeoutSeconds = 60,
+    [string]$EnvironmentFile = (Join-Path (Split-Path -Parent $PSScriptRoot) '.env.docker')
+)
 
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
-$environmentFile = Join-Path $workspace '.env.docker'
 if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
     throw '.env.docker was not found. Run docker-start.cmd first.'
 }
@@ -35,12 +37,16 @@ $orderRequest = @{
     ContentType = 'application/json'; Body = $orderBody; TimeoutSec = 10
 }
 $order = Invoke-RestMethod @orderRequest
+if (-not $order.orderId) { throw 'Order creation response is missing orderId.' }
 Write-Host "Order created: $($order.orderNo). The simulator is charging..." -ForegroundColor Cyan
 
 do {
     Start-Sleep -Seconds 2
     $orders = Invoke-RestMethod -Uri "$api/charging/orders/mine" -Headers $headers -TimeoutSec 5
-    $current = $orders | Where-Object { $_.id -eq $order.id } | Select-Object -First 1
+    $current = $orders | Where-Object { $_.orderId -eq $order.orderId } | Select-Object -First 1
+    if ($current.status -in @('FAILED', 'CANCELLED')) {
+        throw "The order failed: $($current.status)"
+    }
 } while ($current.status -ne 'COMPLETED' -and [DateTime]::UtcNow -lt $deadline)
 if ($current.status -ne 'COMPLETED') { throw "The order did not complete in time. Current status: $($current.status)" }
 
@@ -48,17 +54,27 @@ $paymentHeaders = @{
     'X-Tenant-Id' = $tenantId
     'Idempotency-Key' = "docker-demo-payment-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
 }
-$paymentBody = @{ orderId = $order.id; channel = 'WECHAT' } | ConvertTo-Json
+$paymentBody = @{ orderId = $order.orderId; channel = 'WECHAT' } | ConvertTo-Json
 $paymentRequest = @{
     Method = 'Post'; Uri = "$api/payments"; Headers = $paymentHeaders
     ContentType = 'application/json'; Body = $paymentBody; TimeoutSec = 10
 }
 $payment = Invoke-RestMethod @paymentRequest
+if (-not $payment.paymentId -or $payment.clientParameters.mode -ne 'LOCAL_SIMULATION') {
+    throw 'Expected a local simulated payment intent.'
+}
 $completePaymentRequest = @{
     Method = 'Post'; Uri = "$api/payments/$($payment.paymentId)/simulate-success"
     Headers = $headers; TimeoutSec = 10
 }
-Invoke-RestMethod @completePaymentRequest | Out-Null
+$completedPayment = Invoke-RestMethod @completePaymentRequest
+if ($completedPayment.status -ne 'SUCCEEDED') { throw 'Simulated payment did not succeed.' }
+$orders = Invoke-RestMethod -Uri "$api/charging/orders/mine" -Headers $headers -TimeoutSec 5
+$current = $orders | Where-Object { $_.orderId -eq $order.orderId } | Select-Object -First 1
+if (-not $current -or $current.payableAmountMinor -le 0 -or
+    $current.paidAmountMinor -ne $current.payableAmountMinor) {
+    throw 'Payment was not reflected in the order balance.'
+}
 
 Write-Host ''
 Write-Host 'Flow passed: order, device start, metering, settlement, and simulated WeChat payment.' -ForegroundColor Green

@@ -11,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 final class ChargingOrderService {
@@ -20,6 +21,7 @@ final class ChargingOrderService {
     private final TenantJdbcExecutor tenantJdbc;
     private final Clock clock;
 
+    @Autowired
     ChargingOrderService(ChargingOrderRepository repository, TenantJdbcExecutor tenantJdbc) {
         this(repository, tenantJdbc, Clock.systemUTC());
     }

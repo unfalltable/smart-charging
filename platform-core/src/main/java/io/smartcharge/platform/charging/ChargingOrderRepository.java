@@ -11,7 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
-final class ChargingOrderRepository {
+class ChargingOrderRepository {
     private final JdbcTemplate jdbc;
 
     ChargingOrderRepository(JdbcTemplate jdbc) {
