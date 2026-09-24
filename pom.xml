@@ -29,7 +29,7 @@
         <spring-modulith.version>2.1.1</spring-modulith.version>
         <jnats.version>2.26.0</jnats.version>
         <tomcat.version>11.0.26</tomcat.version>
-        <bouncycastle.version>2.73.12</bouncycastle.version>
+        <bouncycastle.version>2.73.12.1</bouncycastle.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <wechatpay-java.version>0.2.17</wechatpay-java.version>
     </properties>
