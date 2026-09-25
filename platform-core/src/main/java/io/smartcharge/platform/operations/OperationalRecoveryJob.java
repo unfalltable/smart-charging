@@ -67,7 +67,7 @@ final class OperationalRecoveryJob {
                  where tenant_id=? and status='ONLINE' and last_seen_at < now()-interval '3 minutes'
                 """, tenantId);
         jdbc.update("""
-                update connector c set status='OFFLINE', updated_at=now(), version=version+1
+                update connector c set status='OFFLINE', updated_at=now(), version=c.version+1
                   from device d
                  where d.tenant_id=? and d.status='OFFLINE' and c.tenant_id=d.tenant_id and c.device_id=d.id
                    and c.status in ('AVAILABLE','RESERVED')

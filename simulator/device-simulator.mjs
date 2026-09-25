@@ -33,7 +33,14 @@ setInterval(() => sendEvent('HEARTBEAT', { sequenceNo: ++sequenceNo }), 20_000).
 
 function receive(line) {
   const message = JSON.parse(line)
-  if (message.accepted !== undefined) return
+  if (message.accepted !== undefined) {
+    if (!message.accepted) {
+      console.error(`Gateway rejected device message: ${message.code ?? 'UNKNOWN'}`)
+      process.exitCode = 1
+      socket.destroy()
+    }
+    return
+  }
   verifyCommand(message)
   const command = message.command
   console.log(`Received ${command.commandType} command ${command.commandId}`)

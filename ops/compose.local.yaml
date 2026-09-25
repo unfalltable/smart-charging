@@ -104,7 +104,10 @@ services:
       VALKEY_HOST: valkey
       VALKEY_PASSWORD: ${VALKEY_PASSWORD}
       NATS_URL: nats://nats:4222
-      GATEWAY_DEVICE_SECRETS_PILE001: ${PILOT_DEVICE_SECRET:?PILOT_DEVICE_SECRET is required}
+      # Dynamic Map keys cannot be represented reliably as relaxed-binding environment
+      # variable suffixes. JSON preserves the device code as an actual map key.
+      SPRING_APPLICATION_JSON: >-
+        {"gateway":{"device-secrets":{"PILE001":"${PILOT_DEVICE_SECRET:?PILOT_DEVICE_SECRET is required}"}}}
       JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75.0
     ports:
       - "127.0.0.1:${DEVICE_GATEWAY_PORT:-9000}:9000"
