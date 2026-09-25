@@ -1,6 +1,7 @@
 package io.smartcharge.platform.identity;
 
 import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -93,7 +94,7 @@ final class TokenService {
                     (id, tenant_id, customer_id, token_hash, expires_at, family_id)
                 values (?, ?, ?, ?, ?, ?)
                 """, refreshId, tenantId, customerId, sha256(refreshToken),
-                now.plus(Duration.ofDays(refreshDays)), familyId);
+                JdbcTimes.timestamp(now.plus(Duration.ofDays(refreshDays))), familyId);
         if (replacedTokenId != null) {
             jdbc.update("""
                     update auth_refresh_token set revoked_at=now(), replaced_by=?, last_used_at=now()

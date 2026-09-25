@@ -2,6 +2,7 @@ package io.smartcharge.platform.billing;
 
 import io.smartcharge.platform.audit.AuditService;
 import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
@@ -70,7 +71,7 @@ final class TariffManagementController {
                          effective_from, effective_until, status)
                     values (?, ?, ?, 'CNY', ?, cast(? as jsonb), ?, ?, 'DRAFT')
                     """, id, tenantId, request.name(), request.billingMode(), priceRules,
-                    request.effectiveFrom(), request.effectiveUntil());
+                    JdbcTimes.timestamp(request.effectiveFrom()), JdbcTimes.nullableTimestamp(request.effectiveUntil()));
             audit.record("TARIFF_CREATED", "tariff", id, null, request);
             return new TariffView(id, request.name(), "CNY", request.billingMode(), priceRules,
                     request.effectiveFrom(), request.effectiveUntil(), "DRAFT", 0);

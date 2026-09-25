@@ -2,6 +2,7 @@ package io.smartcharge.platform.customer;
 
 import io.smartcharge.platform.audit.AuditService;
 import io.smartcharge.platform.identity.CurrentCustomer;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
@@ -107,7 +108,7 @@ final class AgreementController {
                          content_hash, status, effective_at)
                     values (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
                     """, id, tenantId, request.documentCode(), request.version(), request.title(),
-                    request.contentUrl(), request.contentHash(), request.effectiveAt());
+                    request.contentUrl(), request.contentHash(), JdbcTimes.timestamp(request.effectiveAt()));
             AdminAgreementView view = new AdminAgreementView(id, request.documentCode(), request.version(),
                     request.title(), request.contentUrl(), request.contentHash(), "ACTIVE", request.effectiveAt());
             audit.record("AGREEMENT_PUBLISHED", "agreement_document", id, null, view);

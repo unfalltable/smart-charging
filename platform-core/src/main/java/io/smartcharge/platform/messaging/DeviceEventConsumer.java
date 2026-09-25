@@ -8,6 +8,7 @@ import io.smartcharge.platform.contracts.DeviceEnvelope;
 import io.smartcharge.platform.billing.TariffCalculator;
 import io.smartcharge.platform.billing.TariffCalculator.Mode;
 import io.smartcharge.platform.billing.TariffCalculator.PriceRule;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
@@ -65,13 +66,15 @@ final class DeviceEventConsumer {
                 log.warn("Discarding invalid device event: reason={}", unrecoverable.getClass().getSimpleName());
                 message.term();
             } catch (Exception retryable) {
-                log.warn("Device event processing failed: reason={}", retryable.getClass().getSimpleName());
+                Throwable rootCause = rootCause(retryable);
+                log.warn("Device event processing failed: reason={}, detail={}",
+                        retryable.getClass().getSimpleName(), safeDetail(rootCause));
                 message.nakWithDelay(Duration.ofSeconds(5));
             }
         }
     }
 
-    private void process(DeviceEnvelope envelope) throws Exception {
+    void process(DeviceEnvelope envelope) throws Exception {
         DeviceRoute route = jdbc.query("select tenant_id, device_id from device_route where device_code = ?",
                 (result, row) -> new DeviceRoute(result.getObject("tenant_id", UUID.class),
                         result.getObject("device_id", UUID.class)), envelope.deviceCode()).stream().findFirst()
@@ -84,7 +87,8 @@ final class DeviceEventConsumer {
                     values (?, ?, ?, ?, ?, ?, ?, cast(? as jsonb))
                     on conflict do nothing
                     """, UUID.randomUUID(), route.tenantId(), route.deviceId(), envelope.messageId(),
-                    envelope.nonce(), envelope.eventType().name(), envelope.occurredAt(), envelope.payload());
+                    envelope.nonce(), envelope.eventType().name(), JdbcTimes.timestamp(envelope.occurredAt()),
+                    envelope.payload());
             if (inserted == 0) return null;
             jdbc.update("update device set status = 'ONLINE', last_seen_at = now(), updated_at = now() where tenant_id = ? and id = ?",
                     route.tenantId(), route.deviceId());
@@ -109,7 +113,8 @@ final class DeviceEventConsumer {
                 update connector set status = ?, last_status_at = ?, updated_at = now(), version = version + 1
                  where tenant_id = ? and device_id = ? and connector_no = ?
                    and (last_status_at is null or last_status_at <= ?)
-                """, status, occurredAt, route.tenantId(), route.deviceId(), connectorNo, occurredAt);
+                """, status, JdbcTimes.timestamp(occurredAt), route.tenantId(), route.deviceId(), connectorNo,
+                JdbcTimes.timestamp(occurredAt));
     }
 
     private void acknowledgeCommand(DeviceRoute route, JsonNode payload) {
@@ -133,19 +138,19 @@ final class DeviceEventConsumer {
         int changed = jdbc.update("""
                 update charging_order set status = 'CHARGING', started_at = ?, updated_at = now(), version = version + 1
                  where tenant_id = ? and id = ? and status = 'START_PENDING'
-                """, occurredAt, route.tenantId(), orderId);
+                """, JdbcTimes.timestamp(occurredAt), route.tenantId(), orderId);
         if (changed != 1) throw new IllegalArgumentException("Order cannot enter charging state");
         recordOrderStatus(route.tenantId(), orderId, "START_PENDING", "CHARGING", "DEVICE_CONFIRMED_START",
                 "device:" + route.deviceId());
         jdbc.update("""
                 update charging_session set meter_start_wh = ?, started_at = ?, updated_at = now(), version = version + 1
                  where tenant_id = ? and order_id = ?
-                """, meterStartWh, occurredAt, route.tenantId(), orderId);
+                """, meterStartWh, JdbcTimes.timestamp(occurredAt), route.tenantId(), orderId);
         jdbc.update("""
                 update connector c set status = 'CHARGING', last_status_at = ?, updated_at = now(), version = version + 1
                   from charging_order o
                  where o.tenant_id = ? and o.id = ? and c.tenant_id = o.tenant_id and c.id = o.connector_id
-                """, occurredAt, route.tenantId(), orderId);
+                """, JdbcTimes.timestamp(occurredAt), route.tenantId(), orderId);
     }
 
     private void recordMeter(DeviceRoute route, Instant occurredAt, JsonNode payload) {
@@ -167,7 +172,7 @@ final class DeviceEventConsumer {
                      energy_wh, power_w, voltage_mv, current_ma, raw_payload)
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as jsonb))
                 on conflict do nothing
-                """, route.tenantId(), route.deviceId(), connectorId, sessionId, occurredAt,
+                """, route.tenantId(), route.deviceId(), connectorId, sessionId, JdbcTimes.timestamp(occurredAt),
                 requiredLong(payload, "sequenceNo"), requiredLong(payload, "energyWh"),
                 optionalInt(payload, "powerW"), optionalInt(payload, "voltageMv"),
                 optionalInt(payload, "currentMa"), payload.toString());
@@ -206,19 +211,20 @@ final class DeviceEventConsumer {
                 update charging_session set meter_stop_wh = ?, energy_wh = ?, stopped_at = ?, stop_reason = ?,
                        updated_at = now(), version = version + 1
                  where tenant_id = ? and order_id = ?
-                """, meterStopWh, result.energyWh(), occurredAt, textOrDefault(payload.path("reason"), "DEVICE_STOP"),
+                """, meterStopWh, result.energyWh(), JdbcTimes.timestamp(occurredAt),
+                textOrDefault(payload.path("reason"), "DEVICE_STOP"),
                 route.tenantId(), orderId);
         jdbc.update("""
                 update charging_order set status = 'COMPLETED', stopped_at = ?, payable_amount_minor = ?,
                        updated_at = now(), version = version + 1
                  where tenant_id = ? and id = ?
-                """, occurredAt, result.amountMinor(), route.tenantId(), orderId);
+                """, JdbcTimes.timestamp(occurredAt), result.amountMinor(), route.tenantId(), orderId);
         recordOrderStatus(route.tenantId(), orderId, billing.orderStatus(), "COMPLETED",
                 textOrDefault(payload.path("reason"), "DEVICE_STOP"), "device:" + route.deviceId());
         jdbc.update("""
                 update connector set status = 'AVAILABLE', last_status_at = ?, updated_at = now(), version = version + 1
                  where tenant_id = ? and id = ?
-                """, occurredAt, route.tenantId(), billing.connectorId());
+                """, JdbcTimes.timestamp(occurredAt), route.tenantId(), billing.connectorId());
     }
 
     private void recordAlarm(DeviceRoute route, DeviceEnvelope envelope, JsonNode payload) {
@@ -239,7 +245,7 @@ final class DeviceEventConsumer {
                 values (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
                 on conflict (tenant_id, device_id, external_alarm_id) do nothing
                 """, UUID.randomUUID(), route.tenantId(), route.deviceId(), connectorId, externalId,
-                code, severity, message, envelope.occurredAt());
+                code, severity, message, JdbcTimes.timestamp(envelope.occurredAt()));
         jdbc.update("update device set status = 'FAULTED', updated_at = now() where tenant_id = ? and id = ?",
                 route.tenantId(), route.deviceId());
     }
@@ -292,6 +298,21 @@ final class DeviceEventConsumer {
         if (node.isMissingNode() || node.isNull()) return defaultValue;
         String value = node.asString(defaultValue);
         return value.isBlank() ? defaultValue : value;
+    }
+
+    private static Throwable rootCause(Throwable failure) {
+        Throwable result = failure;
+        for (int depth = 0; depth < 32 && result.getCause() != null && result.getCause() != result; depth++) {
+            result = result.getCause();
+        }
+        return result;
+    }
+
+    private static String safeDetail(Throwable failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) return failure.getClass().getSimpleName();
+        String singleLine = message.replace('\r', ' ').replace('\n', ' ');
+        return singleLine.length() <= 512 ? singleLine : singleLine.substring(0, 512);
     }
 
     record DeviceRoute(UUID tenantId, UUID deviceId) { }

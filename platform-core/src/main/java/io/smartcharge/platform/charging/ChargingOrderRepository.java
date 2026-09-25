@@ -1,6 +1,7 @@
 package io.smartcharge.platform.charging;
 
 import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -106,7 +107,7 @@ class ChargingOrderRepository {
                      where tenant_id = ? and id = ? and status = 'ACTIVE'
                        and effective_from <= ? and (effective_until is null or effective_until > ?)
                 )
-                """, Boolean.class, tenantId, tariffId, now, now));
+                """, Boolean.class, tenantId, tariffId, JdbcTimes.timestamp(now), JdbcTimes.timestamp(now)));
     }
 
     int insertOrder(ChargingOrder order, UUID tariffId, String orderNo, String idempotencyKey) {
@@ -139,7 +140,8 @@ class ChargingOrderRepository {
                 insert into device_command
                     (id, tenant_id, device_id, connector_id, order_id, command_type, status, payload, expires_at)
                 values (?, ?, ?, ?, ?, 'START_CHARGING', 'PENDING', cast(? as jsonb), ?)
-                """, commandId, tenantId, deviceId, connectorId, orderId, commandPayload, expiresAt);
+                """, commandId, tenantId, deviceId, connectorId, orderId, commandPayload,
+                JdbcTimes.timestamp(expiresAt));
         String eventPayload = "{\"commandId\":\"" + commandId + "\",\"deviceId\":\"" + deviceId + "\"}";
         jdbc.update("""
                 insert into outbox_event
@@ -161,7 +163,8 @@ class ChargingOrderRepository {
                 insert into device_command
                     (id, tenant_id, device_id, connector_id, order_id, command_type, status, payload, expires_at)
                 values (?, ?, ?, ?, ?, 'STOP_CHARGING', 'PENDING', cast(? as jsonb), ?)
-                """, commandId, tenantId, deviceId, connectorId, orderId, commandPayload, expiresAt);
+                """, commandId, tenantId, deviceId, connectorId, orderId, commandPayload,
+                JdbcTimes.timestamp(expiresAt));
         String eventPayload = "{\"commandId\":\"" + commandId + "\",\"deviceId\":\"" + deviceId + "\"}";
         jdbc.update("""
                 insert into outbox_event

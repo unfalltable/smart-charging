@@ -2,6 +2,7 @@ package io.smartcharge.platform.operations;
 
 import io.smartcharge.platform.audit.AuditService;
 import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
@@ -190,7 +191,8 @@ final class OperationsManagementController {
                     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, id, tenantId, number, request.alarmId(), request.deviceId(), request.connectorId(),
                     request.title(), request.description(), request.priority(),
-                    request.assigneeSubject() == null ? "OPEN" : "ASSIGNED", request.assigneeSubject(), request.dueAt());
+                    request.assigneeSubject() == null ? "OPEN" : "ASSIGNED", request.assigneeSubject(),
+                    JdbcTimes.nullableTimestamp(request.dueAt()));
             WorkOrderView created = findWorkOrder(tenantId, id);
             audit.record("WORK_ORDER_CREATED", "work_order", id, null, created);
             return created;

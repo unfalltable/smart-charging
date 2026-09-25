@@ -2,6 +2,7 @@ package io.smartcharge.platform.finance;
 
 import io.smartcharge.platform.audit.AuditService;
 import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
@@ -348,12 +349,12 @@ final class FinanceAdminController {
             Long payments = jdbc.queryForObject("""
                     select coalesce(sum(amount_minor),0) from payment_transaction
                      where tenant_id=? and status='SUCCEEDED' and completed_at>=? and completed_at<?
-                    """, Long.class, tenantId, start, endExclusive);
+                    """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive));
             Long refunds = jdbc.queryForObject("""
                     select coalesce(sum(r.amount_minor),0) from refund_transaction r
                     join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
                      where r.tenant_id=? and r.status='SUCCEEDED' and r.completed_at>=? and r.completed_at<?
-                    """, Long.class, tenantId, start, endExclusive);
+                    """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive));
             long gross = Math.max(0, value(payments) - value(refunds));
             long settlement = Math.multiplyExact(gross, rule.shareBasisPoints()) / 10_000;
             UUID id = UUID.randomUUID();

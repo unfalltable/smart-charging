@@ -2,6 +2,7 @@ package io.smartcharge.platform.operations;
 
 import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
+import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -43,7 +44,7 @@ final class OperationsDashboardController {
             Long revenue = jdbc.queryForObject("""
                     select coalesce(sum(amount_minor), 0) from payment_transaction
                      where tenant_id = ? and status = 'SUCCEEDED' and completed_at >= ?
-                    """, Long.class, tenantId, todayUtc);
+                    """, Long.class, tenantId, JdbcTimes.timestamp(todayUtc));
             return new DashboardSummary(devices.online(), devices.total(), value(available),
                     value(activeOrders), value(revenue));
         });
