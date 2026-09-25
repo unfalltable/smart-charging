@@ -10,3 +10,39 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: http://localhost/test
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: test-only-password
+      ssl:
+        enabled: false
+charging:
+  qr-signing-secret: test-only-qr-signing-secret-at-least-32-characters
+  security:
+    app-issuer: https://test.invalid/application
+    app-jwt-secret-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    oidc-issuer-uri: https://test.invalid/oidc
+    api-audience: smart-charging-test
+    access-token-minutes: 15
+    refresh-token-days: 30
+  identity:
+    wechat:
+      enabled: false
+      app-id: ''
+      app-secret: ''
+      tenant-code: ''
+  notification:
+    wechat:
+      enabled: false
+      templates-json: '{}'
+  web:
+    allowed-origins: https://test.invalid
+  rate-limit:
+    default-per-minute: 600
+    public-per-minute: 120
+    login-per-minute: 20
+  device-credentials:
+    master-key-base64: ''
+nats:
+  url: nats://localhost:4222

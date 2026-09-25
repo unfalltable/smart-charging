@@ -78,17 +78,6 @@ final class PaymentService {
         }
     }
 
-    PaymentIntent completeLocal(UUID paymentId) {
-        UUID tenantId = TenantContext.requireTenantId();
-        UUID customerId = currentCustomer.requireId();
-        return tenantJdbc.readWrite(() -> {
-            PaymentRecord payment = lockCustomerPayment(tenantId, customerId, paymentId);
-            complete(tenantId, payment, "local-" + payment.id(), payment.amountMinor(), "local-simulation");
-            return new PaymentIntent(payment.id(), payment.merchantOrderNo(), payment.channel(),
-                    payment.amountMinor(), "SUCCEEDED", Map.of());
-        });
-    }
-
     void processCallback(String channel, String tenantCode, Map<String, String> headers, String body) {
         UUID callbackTenant = resolveTenant(tenantCode);
         PaymentGateway.VerifiedCallback callback = gateways.required(channel)

@@ -2,8 +2,8 @@ spring:
   application:
     name: smart-charging-core
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/charging}
-    username: ${DATABASE_USER:charging_app}
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USER}
     password: ${DATABASE_PASSWORD}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:20}
@@ -18,12 +18,12 @@ spring:
         size: 4
   data:
     redis:
-      host: ${VALKEY_HOST:localhost}
+      host: ${VALKEY_HOST}
       port: ${VALKEY_PORT:6379}
-      password: ${VALKEY_PASSWORD:}
+      password: ${VALKEY_PASSWORD}
       timeout: 2s
       ssl:
-        enabled: ${VALKEY_TLS_ENABLED:false}
+        enabled: ${VALKEY_TLS_ENABLED:true}
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
@@ -37,7 +37,7 @@ server:
 charging:
   qr-signing-secret: ${QR_SIGNING_SECRET}
   security:
-    app-issuer: ${APP_JWT_ISSUER:https://api.example.invalid}
+    app-issuer: ${APP_JWT_ISSUER}
     app-jwt-secret-base64: ${AUTH_JWT_SECRET_BASE64}
     oidc-issuer-uri: ${OIDC_ISSUER_URI}
     api-audience: ${API_JWT_AUDIENCE:smart-charging-api}
@@ -45,6 +45,7 @@ charging:
     refresh-token-days: ${REFRESH_TOKEN_DAYS:30}
   identity:
     wechat:
+      enabled: ${WECHAT_IDENTITY_ENABLED:false}
       app-id: ${WECHAT_APP_ID:}
       app-secret: ${WECHAT_APP_SECRET:}
       tenant-code: ${WECHAT_TENANT_CODE:}
@@ -53,7 +54,7 @@ charging:
       enabled: ${WECHAT_NOTIFICATION_ENABLED:false}
       templates-json: ${WECHAT_NOTIFICATION_TEMPLATES_JSON:{}}
   web:
-    allowed-origins: ${ALLOWED_ORIGINS:}
+    allowed-origins: ${ALLOWED_ORIGINS}
   rate-limit:
     default-per-minute: ${RATE_LIMIT_DEFAULT_PER_MINUTE:600}
     public-per-minute: ${RATE_LIMIT_PUBLIC_PER_MINUTE:120}
@@ -61,7 +62,7 @@ charging:
   device-credentials:
     master-key-base64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64:}
 nats:
-  url: ${NATS_URL:nats://localhost:4222}
+  url: ${NATS_URL}
 outbox:
   publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:250}
 management:

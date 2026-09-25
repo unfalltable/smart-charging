@@ -10,7 +10,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -21,7 +20,6 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @Component
-@Profile("!local")
 @ConditionalOnProperty(prefix = "charging.notification.wechat", name = "enabled", havingValue = "true")
 @EnableConfigurationProperties(WeChatNotificationProperties.class)
 final class WeChatNotificationSender implements NotificationSender {

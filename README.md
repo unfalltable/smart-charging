@@ -1,63 +1,78 @@
 # Smart Charging Platform V2
 
-面向运营商、场站与终端用户的多租户两轮车充电平台。V2 是独立的新实现，不依赖旧系统代码。
+面向充电运营商、场站和终端用户的多租户两轮车充电平台。V2 是独立的新实现，不依赖旧系统代码。
 
-## 当前可验证能力
+## 已实现能力
 
-- Java 21 + Spring Boot 4.1 + Spring Modulith 的模块化核心服务。
+- Java 21、Spring Boot 4.1、Spring Modulith 的模块化核心服务。
 - PostgreSQL 行级安全策略与应用层租户授权双重隔离。
-- 订单、充电会话、计量、设备命令、支付、退款、双式记账、审计、outbox/inbox 数据模型。
-- 订单创建幂等、充电口并发锁定、启动命令与 outbox 同事务提交。
-- Netty 长连接设备网关，支持双向 TLS、HMAC、时间窗与分布式 nonce 防重放。
-- NATS 设备事件通道；Valkey 用于跨实例防重放。
-- 微信小程序 code2Session 登录、短期访问令牌、轮换刷新令牌与复用检测；管理端支持 OIDC Authorization Code + PKCE。
-- 租户角色、管理端 MFA/OIDC 对接边界、分布式限流、安全响应头、请求追踪和带来源 IP 的审计日志。
-- 受 `SCOPE_internal` 保护的租户与首个管理员原子化开通接口，日常权限变更由租户管理员审计管理。
-- 场站/设备/端口、费率、订单、支付退款、对账结算、钱包、发票、告警工单、协议签署与客服工单管理界面和 API。
-- 微信支付 APIv3 官方 Java SDK：JSAPI 下单参数、回调验签解密、退款、主动查单与异常恢复；商户密钥只通过外部秘密引用加载。
-- 微信订阅消息授权和生产发送器，支持共享 access token 缓存、模板字段映射和失败重试。
-- 设备密钥在线生成与轮换，AES-256-GCM 加密存入 Valkey，网关跨实例读取并短时缓存。
-- 一台 12 口桩的本地试点数据脚本。
+- 场站、设备、端口、费率、订单、充电会话、计量、命令、支付、退款、双式记账、对账结算、钱包、发票、告警工单、协议和审计模型。
+- 订单幂等、充电口并发锁、outbox/inbox、支付回调验签、主动查单和异常恢复。
+- Netty 设备网关，支持双向 TLS、HMAC、时间窗和 Valkey 分布式 nonce 防重放。
+- 微信小程序 code2Session 登录、访问令牌、刷新令牌轮换与复用检测。
+- 管理端 OIDC Authorization Code + PKCE、租户角色校验、分布式限流和请求追踪。
+- 微信支付 APIv3 官方 Java SDK、退款、订阅消息发送和外部秘密引用。
+- 设备密钥在线生成与轮换，AES-256-GCM 加密存入 Valkey。
 
-## Docker 一键运行
+## 数据与安全原则
 
-电脑只需安装并启动 Docker Desktop，不需要安装 Java、Maven、Node.js 或数据库。双击根目录的 `docker-start.cmd`，等待脚本提示服务就绪后，打开 `http://127.0.0.1:8088/`：
+仓库运行包不包含演示租户、固定用户、场站、设备、订单、支付记录、模拟支付接口或模拟充电桩。数据库首次启动只执行表结构迁移，业务表保持为空。
+
+自动化测试仍使用隔离测试夹具；它们只存在于测试源码，不会进入生产 JAR、镜像或数据库。生产配置缺失时系统会拒绝启动，不会用默认身份、无效域名或固定密钥代替。
+
+## Docker 启动
+
+Docker 启动使用完整鉴权行为。首次执行：
 
 ```powershell
 .\docker-start.cmd
-.\docker-demo.cmd
 ```
 
-第二个命令会通过容器内的 12 口模拟桩，自动跑通下单、启动、计量、停止计费和本地模拟支付。停止时运行 `.\docker-stop.cmd`；需要连同本地数据一起清空时运行 `.\docker-stop.cmd -DeleteData`。
+脚本会生成仅保存在本机的随机密码和密钥，然后提示在 `.env.docker` 中填写真实 OIDC 配置。配置完成后再次运行同一命令。系统不会自动创建任何业务记录。
 
-微信小程序必须在微信开发者工具或微信客户端中运行，不能运行在 Docker 容器里；其 API、数据库、消息系统和模拟设备均已容器化。详细端口、真机联调与故障排查见 [docs/docker-local.md](docs/docker-local.md)。
+如果电脑以前运行过带固定试用数据的旧版本，启动脚本会拒绝沿用旧数据卷。确认旧数据不需要保留后执行 `.\docker-stop.cmd -DeleteData`，再重新启动，即可得到空库和全新的秘密。
 
-本地 profile 会关闭 OIDC/API 鉴权并启用模拟支付，只能绑定本机回环地址用于开发联调，严禁用于公网。
+首个租户和管理员使用具有 `SCOPE_internal` 的真实 OIDC 服务令牌开通：
 
-## 源码验证
+```powershell
+$env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
+.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName -AdminSubject $oidcSubject -AdminDisplayName $adminName
+```
 
-项目要求 Java 21 和 Maven 3.9.9 以上。仓库中的 `.tools` 仅是本机忽略目录，不会提交。
+真实设备网关默认不启动。准备好设备协议适配器和 mTLS 证书后，在 `.env.docker` 设置 `DEVICE_TLS_DIRECTORY`，再运行：
+
+```powershell
+.\docker-start.cmd -EnableDeviceGateway
+```
+
+详细配置见 [Docker 部署说明](docs/docker-local.md)。停止服务运行 `.\docker-stop.cmd`；只有明确需要不可恢复地清除本机数据库时才运行 `.\docker-stop.cmd -DeleteData`。
+
+## 小程序
+
+微信小程序必须在微信开发者工具或微信客户端运行。发布前必须在
+[apps/miniapp/src/config.js](apps/miniapp/src/config.js) 写入对应环境的真实 HTTPS API 地址和真实租户编码；缺失时小程序会直接拒绝启动。
+
+## 验证
 
 ```powershell
 $env:JAVA_HOME=(Resolve-Path '.tools\jdk-21.0.12.1+1').Path
 .\.tools\apache-maven-3.9.16\bin\mvn.cmd -B -ntp clean verify
+npm run build:web
+npm run check:weapp
+.\ops\tests\local-scripts.test.ps1
 ```
 
-需要营业资质、商户号、真实域名、证书和桩厂协议的工作没有伪造配置；所需外部材料见
-[docs/external-inputs.md](docs/external-inputs.md)。在这些材料到位并完成真机/真实商户验收前，代码通过不代表可以公开收费运营。
+资质、生产凭据、真实设备和基础设施验收清单见
+[外部输入](docs/external-inputs.md) 与 [生产商用门禁](docs/production-readiness.md)。在真实支付、真实桩机、备份恢复、安全和容量验收完成前，不能宣称已经可以公开收费运营。
 
 ## 模块
 
-- `platform-contracts`：设备命令与事件的稳定契约。
-- `platform-core`：租户、资产、充电、计费支付、账务与运营核心。
-- `device-gateway`：设备长连接、安全认证及消息接入。
+- `platform-contracts`：设备命令与事件契约。
+- `platform-core`：租户、资产、充电、计费支付、账务和运营核心。
+- `device-gateway`：设备长连接、安全认证和消息接入。
 - `apps/admin-web`：运营管理 Web。
-- `apps/miniapp`：零运行依赖的原生微信小程序。
-- `simulator`：可执行的 12 口桩协议模拟器。
-- `ops`：本地编排、镜像及试点初始化。
-
-架构边界、扩容原则及商用门禁见 [docs/architecture.md](docs/architecture.md) 和
-[docs/production-readiness.md](docs/production-readiness.md)。
+- `apps/miniapp`：原生微信小程序。
+- `ops`：镜像、空库部署、受控租户开通和运维脚本。
 
 ## 许可
 

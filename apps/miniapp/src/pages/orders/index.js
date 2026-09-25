@@ -38,11 +38,7 @@ Page({
       await platform.subscribeNotifications(getApp().globalData.notificationTemplateIds)
       const intent = await request('/payments', 'POST', { orderId, channel: 'WECHAT' },
         `pay-${orderId}-${Date.now()}`)
-      if (intent.clientParameters?.mode === 'LOCAL_SIMULATION') {
-        await request(`/payments/${intent.paymentId}/simulate-success`, 'POST')
-      } else {
-        await platform.pay(intent.clientParameters)
-      }
+      await platform.pay(intent.clientParameters)
       wx.showToast({ title: '支付成功', icon: 'success' })
       this.onShow()
     } catch (error) {

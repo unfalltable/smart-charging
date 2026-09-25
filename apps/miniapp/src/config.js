@@ -8,20 +8,28 @@ function environmentVersion() {
 
 const profiles = {
   develop: {
-    apiBase: 'http://127.0.0.1:8088/api/v1',
-    tenantCode: 'pilot',
+    apiBase: '',
+    tenantCode: '',
     notificationTemplateIds: []
   },
   trial: {
-    apiBase: 'https://api.example.invalid/api/v1',
-    tenantCode: 'pilot',
+    apiBase: '',
+    tenantCode: '',
     notificationTemplateIds: []
   },
   release: {
-    apiBase: 'https://api.example.invalid/api/v1',
-    tenantCode: 'pilot',
+    apiBase: '',
+    tenantCode: '',
     notificationTemplateIds: []
   }
 }
 
-module.exports = profiles[environmentVersion()]
+const selected = profiles[environmentVersion()]
+if (!selected.apiBase || !selected.tenantCode) {
+  throw new Error('小程序部署配置缺失：必须填写真实 API 地址和租户编码')
+}
+if (!/^https:\/\//.test(selected.apiBase)) {
+  throw new Error('小程序 API 必须使用 HTTPS')
+}
+
+module.exports = selected

@@ -11,7 +11,6 @@ import java.util.HexFormat;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.security.core.Authentication;
@@ -20,7 +19,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
-@Profile("!local")
 public final class DistributedRateLimitFilter extends OncePerRequestFilter {
     private static final Logger LOG = LoggerFactory.getLogger(DistributedRateLimitFilter.class);
     private static final DefaultRedisScript<Long> INCREMENT = new DefaultRedisScript<>("""

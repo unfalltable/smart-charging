@@ -8,7 +8,7 @@ import java.util.Arrays;
 import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -27,12 +27,13 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @EnableConfigurationProperties(RateLimitProperties.class)
 class SecurityConfiguration {
     @Bean
-    @Profile("!local")
     SecurityFilterChain productionSecurity(HttpSecurity http, TenantContextFilter tenantFilter,
                                            RequestContextFilter requestContextFilter,
                                            DistributedRateLimitFilter rateLimitFilter,
                                            TenantAccessFilter tenantAccessFilter,
-                                           JwtDecoder jwtDecoder, CorsConfigurationSource cors) throws Exception {
+                                           JwtDecoder jwtDecoder,
+                                           @Qualifier("corsConfigurationSource") CorsConfigurationSource cors)
+            throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(configuration -> configuration.configurationSource(cors))
@@ -69,17 +70,6 @@ class SecurityConfiguration {
     }
 
     @Bean
-    @Profile("local")
-    SecurityFilterChain localSecurity(HttpSecurity http, TenantContextFilter tenantFilter,
-                                      RequestContextFilter requestContextFilter) throws Exception {
-        return http.csrf(csrf -> csrf.disable())
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .addFilterBefore(requestContextFilter, BearerTokenAuthenticationFilter.class)
-                .addFilterAfter(tenantFilter, BearerTokenAuthenticationFilter.class)
-                .build();
-    }
-
-    @Bean
     CorsConfigurationSource corsConfigurationSource(@Value("${charging.web.allowed-origins:}") String origins) {
         CorsConfiguration configuration = new CorsConfiguration();
         List<String> allowed = Arrays.stream(origins.split(","))
@@ -110,7 +100,6 @@ class SecurityConfiguration {
     }
 
     @Bean
-    @Profile("!local")
     FilterRegistrationBean<DistributedRateLimitFilter> disableRateLimitContainerRegistration(
             DistributedRateLimitFilter filter) {
         FilterRegistrationBean<DistributedRateLimitFilter> registration = new FilterRegistrationBean<>(filter);
@@ -119,7 +108,6 @@ class SecurityConfiguration {
     }
 
     @Bean
-    @Profile("!local")
     FilterRegistrationBean<TenantAccessFilter> disableTenantAccessContainerRegistration(TenantAccessFilter filter) {
         FilterRegistrationBean<TenantAccessFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);

@@ -24,11 +24,9 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile("!local")
 final class WeChatPaymentGateway implements PaymentGateway {
     private final MerchantChannelRepository channels;
     private final EnvironmentSecretMaterialProvider secrets;

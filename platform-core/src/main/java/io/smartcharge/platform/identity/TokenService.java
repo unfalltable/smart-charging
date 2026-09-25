@@ -11,7 +11,6 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -21,7 +20,6 @@ import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.stereotype.Service;
 
 @Service
-@Profile("!local")
 final class TokenService {
     private final JdbcTemplate jdbc;
     private final JwtEncoder encoder;

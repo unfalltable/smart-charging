@@ -5,7 +5,6 @@ const tokenEndpoint = import.meta.env.VITE_OIDC_TOKEN_ENDPOINT as string | undef
 const clientId = import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined
 const scopes = (import.meta.env.VITE_OIDC_SCOPES as string | undefined)
   ?? 'openid profile offline_access admin operator finance auditor support'
-const localMode = import.meta.env.VITE_LOCAL_MODE === 'true'
 
 function redirectUri() {
   return (import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined)
@@ -55,7 +54,9 @@ async function exchange(parameters: URLSearchParams) {
 }
 
 export async function initializeAuth() {
-  if ((import.meta.env.DEV || localMode) && !authorizationEndpoint) return true
+  if (!authorizationEndpoint || !tokenEndpoint || !clientId) {
+    throw new Error('管理端 OIDC 尚未完整配置')
+  }
   const query = new URLSearchParams(location.search)
   const code = query.get('code')
   if (code) {

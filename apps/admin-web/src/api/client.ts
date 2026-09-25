@@ -7,12 +7,10 @@ export type DashboardSummary = {
 }
 
 const apiBase = import.meta.env.VITE_API_BASE ?? '/api/v1'
-const localMode = import.meta.env.VITE_LOCAL_MODE === 'true'
 
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = sessionStorage.getItem('access_token')
-  const tenantId = sessionStorage.getItem('tenant_id')
-    ?? ((import.meta.env.DEV || localMode) ? '11111111-1111-1111-1111-111111111111' : '')
+  const tenantId = sessionStorage.getItem('tenant_id') ?? ''
   const response = await fetch(`${apiBase}${path}`, {
     ...init,
     headers: {

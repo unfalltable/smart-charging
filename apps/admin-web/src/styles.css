@@ -37,7 +37,6 @@ h1 { margin: 4px 0 0; font-size: 30px; letter-spacing: -.5px; }
 .panel-title { display: flex; justify-content: space-between; align-items: flex-start; }
 .panel-title h2 { margin: 5px 0 0; font-size: 18px; }
 .panel-title button { background: #f3f6f8; border: 0; border-radius: 8px; padding: 8px 12px; color: #59677b; }
-.chart-placeholder { height: 230px; margin-top: 24px; border-radius: 12px; background: linear-gradient(180deg, #f5fbf9, #fff); display: grid; place-items: center; color: #8a98aa; font-size: 13px; position: relative; overflow: hidden; }
 .chart-line { position: absolute; width: 110%; height: 90px; border-top: 3px solid #22bd99; border-radius: 50%; transform: rotate(-3deg); opacity: .65; }
 .tasks { list-style: none; padding: 15px 0 0; margin: 0; }
 .tasks li { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #edf0f4; }

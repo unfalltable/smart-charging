@@ -5,13 +5,11 @@ import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile("!local")
 final class PaymentRecoveryJob {
     private static final Logger LOG = LoggerFactory.getLogger(PaymentRecoveryJob.class);
     private final JdbcTemplate jdbc;

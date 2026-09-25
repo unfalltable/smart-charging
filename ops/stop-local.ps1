@@ -20,7 +20,9 @@ try {
     & docker @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Docker Compose shutdown failed.' }
     if ($DeleteData) {
+        Remove-Item -LiteralPath $environmentFile -Force
         Write-Host 'Containers and local Docker data volumes were deleted.' -ForegroundColor Yellow
+        Write-Host 'The local secret file was also removed; the next startup will generate new secrets.' -ForegroundColor Yellow
     }
     else {
         Write-Host 'Containers stopped. Database data remains in Docker volumes.' -ForegroundColor Green

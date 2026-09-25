@@ -2,11 +2,9 @@ package io.smartcharge.platform.finance;
 
 import io.smartcharge.platform.shared.domain.DomainException;
 import java.util.Locale;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile("!local")
 final class EnvironmentSecretMaterialProvider {
     WeChatMaterial weChat(String reference) {
         if (reference == null || !reference.matches("env:[A-Z][A-Z0-9_]{1,80}")) {

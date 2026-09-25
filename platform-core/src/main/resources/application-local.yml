@@ -1,3 +1,0 @@
-logging:
-  level:
-    io.smartcharge.platform: ${APPLICATION_LOG_LEVEL:DEBUG}

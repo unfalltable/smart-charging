@@ -11,93 +11,78 @@ $parserErrors = $null
 if ($parserErrors.Count -gt 0) {
     throw "Startup script contains PowerShell parse errors: $($parserErrors.Message -join '; ')"
 }
+
 $startScript = Get-Content -LiteralPath $startScriptPath -Raw
-if ($startScript -match 'http://localhost' -or $startScript -notmatch 'http://127\.0\.0\.1:\$adminPort/') {
-    throw 'The startup script must print and verify the bound IPv4 admin address.'
-}
-if ($startScript -notmatch 'homepageReady' -or $startScript -notmatch '\$adminPort/api/v1/admin/assets/devices') {
-    throw 'Startup readiness must verify both the frontend document and proxied API.'
-}
 if ($startScript -match '(?im)^\s*\$home\s*=') {
     throw 'The startup script must not overwrite PowerShell automatic variables.'
 }
-if ($startScript -notmatch 'Last readiness check') {
-    throw 'Startup failures must report the final readiness diagnostic.'
+$provisionScriptPath = Join-Path $workspace 'ops/provision-tenant.ps1'
+$provisionTokens = $null
+$provisionErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    $provisionScriptPath,
+    [ref]$provisionTokens,
+    [ref]$provisionErrors
+) | Out-Null
+if ($provisionErrors.Count -gt 0) {
+    throw "Tenant provisioning script contains PowerShell parse errors: $($provisionErrors.Message -join '; ')"
 }
-$miniappConfig = Get-Content -LiteralPath (Join-Path $workspace 'apps/miniapp/src/config.js') -Raw
-if ($miniappConfig -notmatch "apiBase: 'http://127\.0\.0\.1:8088/api/v1'") {
-    throw 'The local miniapp must use the stable Nginx API entry point.'
+foreach ($requiredName in @(
+    'OIDC_ISSUER_URI',
+    'VITE_OIDC_AUTHORIZATION_ENDPOINT',
+    'VITE_OIDC_TOKEN_ENDPOINT',
+    'VITE_OIDC_CLIENT_ID'
+)) {
+    if ($startScript -notmatch [regex]::Escape($requiredName)) {
+        throw "Startup preflight does not require $requiredName."
+    }
 }
-$previousSecret = $env:QR_SIGNING_SECRET
-try {
-    $env:QR_SIGNING_SECRET = 'verification-only-secret-000000000000000'
-    $qr = & (Join-Path $workspace 'ops/generate-pilot-qr.ps1')
-    $expected = 'sc1.11111111-1111-1111-1111-111111111111.44444444-4444-4444-4444-000000000001.253f1c15b7eb5ffdc4739271da4251be9ed2c24f462d90683c1921c70df5c654'
-    if ($qr -ne $expected) { throw 'QR signature does not match the independently calculated HMAC vector.' }
+if (($startScript -notmatch 'empty business database') -or
+        ($startScript -notmatch 'No tenant, user, station, device, tariff, order or payment data was created')) {
+    throw 'Startup output must explicitly confirm that no business records were seeded.'
 }
-finally { $env:QR_SIGNING_SECRET = $previousSecret }
+if ($startScript -notmatch 'PILOT_DEVICE_SECRET' -or $startScript -notmatch 'docker-stop.cmd -DeleteData') {
+    throw 'Startup must block legacy demo volumes until the operator explicitly removes them.'
+}
+$stopScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/stop-local.ps1') -Raw
+if ($stopScript -notmatch 'Remove-Item -LiteralPath \$environmentFile') {
+    throw 'Deleting legacy Docker data must also remove the obsolete local secret file.'
+}
 
-function Test-DemoContract([bool]$ReflectPayment) {
-    $state = @{ reads = 0; paymentRequested = $false; completed = $false }
-    $fixtureOrderId = '77777777-7777-7777-7777-777777777777'
-    $fixturePaymentId = '88888888-8888-8888-8888-888888888888'
-    function Start-Sleep { param([int]$Seconds) }
-    function Invoke-RestMethod {
-        param($Uri, $Method, $Headers, $TimeoutSec, $ContentType, $Body)
-        if ($Headers['X-Tenant-Id'] -ne '11111111-1111-1111-1111-111111111111') {
-            throw 'Missing tenant header.'
-        }
-        switch -Wildcard ($Uri) {
-            '*/admin/assets/devices' { return @([pscustomobject]@{ deviceCode = 'PILE001'; status = 'ONLINE' }) }
-            '*/charging/orders/mine' {
-                $state.reads++
-                return @(
-                    [pscustomobject]@{ orderId = 'unrelated-order'; status = 'COMPLETED'; paidAmountMinor = 99; payableAmountMinor = 99 }
-                    [pscustomobject]@{
-                        orderId = $fixtureOrderId
-                        status = $(if ($state.reads -eq 1) { 'CHARGING' } else { 'COMPLETED' })
-                        energyWh = 350; payableAmountMinor = 1
-                        paidAmountMinor = $(if ($state.completed -and $ReflectPayment) { 1 } else { 0 })
-                    }
-                )
-            }
-            '*/charging/orders' {
-                if ($Method -ne 'Post' -or -not $Headers['Idempotency-Key']) { throw 'Invalid order request.' }
-                return [pscustomobject]@{ orderId = $fixtureOrderId; orderNo = 'CONTRACT-TEST'; status = 'START_PENDING' }
-            }
-            '*/payments' {
-                $request = $Body | ConvertFrom-Json
-                if ($request.orderId -ne $fixtureOrderId -or $request.channel -ne 'WECHAT') {
-                    throw 'Payment does not target the created order.'
-                }
-                $state.paymentRequested = $true
-                return [pscustomobject]@{
-                    paymentId = $fixturePaymentId; clientParameters = @{ mode = 'LOCAL_SIMULATION' }
-                }
-            }
-            "*/payments/$fixturePaymentId/simulate-success" {
-                $state.completed = $true
-                return [pscustomobject]@{ paymentId = $fixturePaymentId; status = 'SUCCEEDED' }
-            }
-            default { throw "Unexpected API request: $Uri" }
-        }
-    }
+$compose = Get-Content -LiteralPath (Join-Path $workspace 'ops/compose.local.yaml') -Raw
+foreach ($forbidden in @('simulator:', 'bootstrap:', 'VITE_LOCAL_MODE', 'SPRING_PROFILES_ACTIVE: local',
+        'PILE001', '11111111-1111-1111-1111-111111111111')) {
+    if ($compose.Contains($forbidden)) { throw "Runtime compose contains forbidden demo configuration: $forbidden" }
+}
+if ($compose -notmatch 'SPRING_PROFILES_ACTIVE: production') {
+    throw 'Docker runtime must use production security behavior.'
+}
+if ($compose -notmatch 'profiles: \["device"\]' -or $compose -notmatch 'DEVICE_TLS_ENABLED: "true"') {
+    throw 'The real device gateway must be opt-in and require TLS.'
+}
 
-    $failure = $null
-    try {
-        & (Join-Path $workspace 'ops/demo-charge.ps1') -TimeoutSeconds 1 `
-            -EnvironmentFile (Join-Path $workspace '.env.docker.example')
-    }
-    catch { $failure = $_.Exception.Message }
-    if ($ReflectPayment -and $failure) { throw $failure }
-    if (-not $ReflectPayment -and $failure -ne 'Payment was not reflected in the order balance.') {
-        throw 'Demo must reject an uncredited payment.'
-    }
-    if (-not $state.paymentRequested -or -not $state.completed -or $state.reads -lt 3) {
-        throw 'Demo did not verify the complete order/payment contract.'
+$forbiddenRuntimeFiles = @(
+    'docker-demo.cmd',
+    'simulator/device-simulator.mjs',
+    'ops/demo-charge.ps1',
+    'ops/pilot-12-port.sql',
+    'ops/generate-pilot-qr.ps1'
+)
+foreach ($relativePath in $forbiddenRuntimeFiles) {
+    if (Test-Path -LiteralPath (Join-Path $workspace $relativePath)) {
+        throw "Demo runtime artifact must not be shipped: $relativePath"
     }
 }
 
-Test-DemoContract -ReflectPayment $true
-Test-DemoContract -ReflectPayment $false
-Write-Host 'PASS: QR signature, orderId contract, payment completion and unpaid-order rejection.'
+$runtimeSource = @(
+    (Get-ChildItem -LiteralPath (Join-Path $workspace 'platform-core/src/main') -Recurse -File),
+    (Get-ChildItem -LiteralPath (Join-Path $workspace 'apps') -Recurse -File)
+) | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }
+$runtimeText = $runtimeSource -join [Environment]::NewLine
+foreach ($forbidden in @('LOCAL_SIMULATION', 'simulate-success',
+        '11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555',
+        'api.example.invalid')) {
+    if ($runtimeText.Contains($forbidden)) { throw "Runtime source contains forbidden fake value: $forbidden" }
+}
+
+Write-Host 'PASS: production runtime has no seeded business data or simulation bypasses.'

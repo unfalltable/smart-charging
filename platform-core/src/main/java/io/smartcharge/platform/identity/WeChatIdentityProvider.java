@@ -7,7 +7,6 @@ import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
@@ -15,8 +14,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @Component
-@Profile("!local")
-@ConditionalOnProperty(prefix = "charging.identity.wechat", name = {"app-id", "app-secret", "tenant-code"})
+@ConditionalOnProperty(prefix = "charging.identity.wechat", name = "enabled", havingValue = "true")
 final class WeChatIdentityProvider implements MiniappIdentityProvider {
     private final WeChatIdentityProperties properties;
     private final RestClient http;
@@ -24,6 +22,12 @@ final class WeChatIdentityProvider implements MiniappIdentityProvider {
 
     WeChatIdentityProvider(WeChatIdentityProperties properties) {
         this.properties = properties;
+        if (properties.appId() == null || properties.appId().isBlank()
+                || properties.appSecret() == null || properties.appSecret().isBlank()
+                || properties.tenantCode() == null || properties.tenantCode().isBlank()) {
+            throw new IllegalStateException(
+                    "Enabled WeChat identity requires WECHAT_APP_ID, WECHAT_APP_SECRET and WECHAT_TENANT_CODE");
+        }
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(client);
         requestFactory.setReadTimeout(Duration.ofSeconds(5));

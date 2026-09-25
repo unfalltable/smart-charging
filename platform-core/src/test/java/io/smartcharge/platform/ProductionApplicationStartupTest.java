@@ -16,24 +16,25 @@ import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "spring.profiles.active=local",
         "charging.qr-signing-secret=startup-test-qr-key-at-least-32-characters",
         "charging.device-credentials.master-key-base64=",
         "spring.flyway.enabled=true"
 })
-class LocalApplicationStartupTest {
+class ProductionApplicationStartupTest {
     @MockitoBean DataSource dataSource;
     @MockitoBean Flyway flyway;
     @MockitoBean JdbcTemplate jdbc;
     @MockitoBean Connection natsConnection;
     @MockitoBean(answers = Answers.RETURNS_DEEP_STUBS) JetStream jetStream;
+    @MockitoBean JwtDecoder jwtDecoder;
     @Value("${local.server.port}") int port;
 
     @Test
-    void localApplicationStartsAndExposesReadiness() throws Exception {
+    void productionSecurityApplicationStartsAndExposesReadiness() throws Exception {
         verify(flyway).migrate();
         try (var client = HttpClient.newHttpClient()) {
             var response = client.send(HttpRequest.newBuilder(

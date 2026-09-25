@@ -7,7 +7,6 @@ import javax.crypto.spec.SecretKeySpec;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtDecoders;
@@ -22,11 +21,13 @@ import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 
 @Configuration
-@Profile("!local")
 @EnableConfigurationProperties({TokenProperties.class, WeChatIdentityProperties.class})
 class TokenConfiguration {
     @Bean
     SecretKey appJwtSecret(TokenProperties properties) {
+        if (properties.appJwtSecretBase64() == null || properties.appJwtSecretBase64().isBlank()) {
+            throw new IllegalStateException("AUTH_JWT_SECRET_BASE64 is required");
+        }
         byte[] secret;
         try {
             secret = Base64.getDecoder().decode(properties.appJwtSecretBase64());
@@ -44,6 +45,15 @@ class TokenConfiguration {
 
     @Bean
     JwtDecoder jwtDecoder(SecretKey secret, TokenProperties properties) {
+        if (properties.appIssuer() == null || properties.appIssuer().isBlank()) {
+            throw new IllegalStateException("APP_JWT_ISSUER is required");
+        }
+        if (properties.oidcIssuerUri() == null || properties.oidcIssuerUri().isBlank()) {
+            throw new IllegalStateException("OIDC_ISSUER_URI is required");
+        }
+        if (properties.apiAudience() == null || properties.apiAudience().isBlank()) {
+            throw new IllegalStateException("API_JWT_AUDIENCE is required");
+        }
         NimbusJwtDecoder application = NimbusJwtDecoder.withSecretKey(secret).macAlgorithm(MacAlgorithm.HS256).build();
         OAuth2TokenValidator<Jwt> audience = jwt -> jwt.getAudience().contains(properties.apiAudience())
                 ? OAuth2TokenValidatorResult.success()

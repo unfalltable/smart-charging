@@ -7,7 +7,6 @@
   "scripts": {
     "build:web": "npm run build --workspace=@smartcharge/admin-web",
     "check:weapp": "npm run check --workspace=@smartcharge/wechat-miniapp",
-    "simulate:device": "node simulator/device-simulator.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {
