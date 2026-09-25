@@ -71,27 +71,35 @@ try {
     $corePort = ((Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CORE_PORT=' }) -split '=', 2)[1]
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $ready = $false
+    $lastReadinessStatus = 'Readiness checks have not completed yet.'
     do {
         try {
             $core = Invoke-RestMethod -Uri "http://127.0.0.1:$corePort/actuator/health/readiness" -TimeoutSec 3
             $web = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/healthz" -TimeoutSec 3 -UseBasicParsing
-            $home = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/" -TimeoutSec 3 -UseBasicParsing
+            $homepageResponse = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/" -TimeoutSec 3 -UseBasicParsing
             $deviceHeaders = @{ 'X-Tenant-Id' = '11111111-1111-1111-1111-111111111111' }
             $devices = Invoke-RestMethod -Uri "http://127.0.0.1:$adminPort/api/v1/admin/assets/devices" `
                 -Headers $deviceHeaders -TimeoutSec 3
             $simulatorOnline = $null -ne ($devices | Where-Object {
                 $_.deviceCode -eq 'PILE001' -and $_.status -eq 'ONLINE'
             } | Select-Object -First 1)
-            $homepageReady = $home.StatusCode -eq 200 -and $home.Content -match '<div id="app"></div>'
+            $homepageReady = $homepageResponse.StatusCode -eq 200 -and `
+                $homepageResponse.Content -match '<div id="app"></div>'
             $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and $simulatorOnline
+            $lastReadinessStatus = "core=$($core.status), healthz=$($web.StatusCode), " +
+                "homepage=$homepageReady, simulatorOnline=$simulatorOnline"
         }
-        catch { $ready = $false }
+        catch {
+            $ready = $false
+            $lastReadinessStatus = "error=$($_.Exception.Message)"
+        }
         if (-not $ready) { Start-Sleep -Seconds 2 }
     } while (-not $ready -and [DateTime]::UtcNow -lt $deadline)
 
     if (-not $ready) {
         & docker @compose ps --all
         & docker @compose logs --tail 80 core device-gateway bootstrap admin-web simulator
+        Write-Warning "Last readiness check: $lastReadinessStatus"
         throw "Services did not become ready within $TimeoutSeconds seconds. Review the container logs above."
     }
 

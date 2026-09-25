@@ -1,11 +1,28 @@
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$startScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/start-local.ps1') -Raw
+$startScriptPath = Join-Path $workspace 'ops/start-local.ps1'
+$parserTokens = $null
+$parserErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    $startScriptPath,
+    [ref]$parserTokens,
+    [ref]$parserErrors
+) | Out-Null
+if ($parserErrors.Count -gt 0) {
+    throw "Startup script contains PowerShell parse errors: $($parserErrors.Message -join '; ')"
+}
+$startScript = Get-Content -LiteralPath $startScriptPath -Raw
 if ($startScript -match 'http://localhost' -or $startScript -notmatch 'http://127\.0\.0\.1:\$adminPort/') {
     throw 'The startup script must print and verify the bound IPv4 admin address.'
 }
 if ($startScript -notmatch 'homepageReady' -or $startScript -notmatch '\$adminPort/api/v1/admin/assets/devices') {
     throw 'Startup readiness must verify both the frontend document and proxied API.'
+}
+if ($startScript -match '(?im)^\s*\$home\s*=') {
+    throw 'The startup script must not overwrite PowerShell automatic variables.'
+}
+if ($startScript -notmatch 'Last readiness check') {
+    throw 'Startup failures must report the final readiness diagnostic.'
 }
 $miniappConfig = Get-Content -LiteralPath (Join-Path $workspace 'apps/miniapp/src/config.js') -Raw
 if ($miniappConfig -notmatch "apiBase: 'http://127\.0\.0\.1:8088/api/v1'") {
