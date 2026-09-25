@@ -9,8 +9,8 @@ if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
     throw '.env.docker was not found. Run docker-start.cmd first.'
 }
 
-$corePort = ((Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^CORE_PORT=' }) -split '=', 2)[1]
-$api = "http://127.0.0.1:$corePort/api/v1"
+$adminPort = ((Get-Content -LiteralPath $environmentFile | Where-Object { $_ -match '^ADMIN_WEB_PORT=' }) -split '=', 2)[1]
+$api = "http://127.0.0.1:$adminPort/api/v1"
 $tenantId = '11111111-1111-1111-1111-111111111111'
 $headers = @{ 'X-Tenant-Id' = $tenantId }
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)

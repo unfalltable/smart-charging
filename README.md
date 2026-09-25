@@ -21,7 +21,7 @@
 
 ## Docker 一键运行
 
-电脑只需安装并启动 Docker Desktop，不需要安装 Java、Maven、Node.js 或数据库。双击根目录的 `docker-start.cmd`，等待脚本提示服务就绪后，打开 `http://localhost:8088`：
+电脑只需安装并启动 Docker Desktop，不需要安装 Java、Maven、Node.js 或数据库。双击根目录的 `docker-start.cmd`，等待脚本提示服务就绪后，打开 `http://127.0.0.1:8088/`：
 
 ```powershell
 .\docker-start.cmd

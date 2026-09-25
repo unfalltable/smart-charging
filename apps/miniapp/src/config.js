@@ -8,7 +8,7 @@ function environmentVersion() {
 
 const profiles = {
   develop: {
-    apiBase: 'http://127.0.0.1:8080/api/v1',
+    apiBase: 'http://127.0.0.1:8088/api/v1',
     tenantCode: 'pilot',
     notificationTemplateIds: []
   },

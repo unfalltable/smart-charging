@@ -1,5 +1,16 @@
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$startScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/start-local.ps1') -Raw
+if ($startScript -match 'http://localhost' -or $startScript -notmatch 'http://127\.0\.0\.1:\$adminPort/') {
+    throw 'The startup script must print and verify the bound IPv4 admin address.'
+}
+if ($startScript -notmatch 'homepageReady' -or $startScript -notmatch '\$adminPort/api/v1/admin/assets/devices') {
+    throw 'Startup readiness must verify both the frontend document and proxied API.'
+}
+$miniappConfig = Get-Content -LiteralPath (Join-Path $workspace 'apps/miniapp/src/config.js') -Raw
+if ($miniappConfig -notmatch "apiBase: 'http://127\.0\.0\.1:8088/api/v1'") {
+    throw 'The local miniapp must use the stable Nginx API entry point.'
+}
 $previousSecret = $env:QR_SIGNING_SECRET
 try {
     $env:QR_SIGNING_SECRET = 'verification-only-secret-000000000000000'
