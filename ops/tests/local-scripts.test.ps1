@@ -43,7 +43,7 @@ foreach ($requiredName in @(
     }
 }
 if (($startScript -notmatch 'empty business database') -or
-        ($startScript -notmatch 'No tenant, user, station, device, tariff, order or payment data was created')) {
+        ($startScript -notmatch 'No business tenant, station, device, tariff, order or payment data was created')) {
     throw 'Startup output must explicitly confirm that no business records were seeded.'
 }
 if ($configurationScript -notmatch 'PILOT_DEVICE_SECRET') {
@@ -53,7 +53,7 @@ $stopScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/stop-local.ps1
 if ($stopScript -notmatch 'Remove-Item -LiteralPath \$environmentFile') {
     throw 'Deleting legacy Docker data must also remove the obsolete local secret file.'
 }
-foreach ($cleanupOverride in @('ADMIN_WEB_PORT', 'DEVICE_GATEWAY_PORT', 'NATS_MONITOR_PORT')) {
+foreach ($cleanupOverride in @('ADMIN_WEB_PORT', 'KEYCLOAK_PORT', 'DEVICE_GATEWAY_PORT', 'NATS_MONITOR_PORT')) {
     if ($stopScript -notmatch 'SetEnvironmentVariable' -or $stopScript -notmatch $cleanupOverride) {
         throw "Legacy cleanup must override malformed Compose value: $cleanupOverride"
     }
@@ -74,6 +74,20 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
     if ($compose -notmatch $requiredRuntimeSetting) {
         throw "Docker runtime is not connected to unified setting: $requiredRuntimeSetting"
     }
+}
+foreach ($requiredIdentitySetting in @('profiles: ["bundled-identity"]', 'start', '--optimized', '--import-realm',
+        'KC_BOOTSTRAP_ADMIN_PASSWORD', 'OIDC_JWK_SET_URI', 'postgres-init-keycloak.sh',
+        'service_completed_successfully')) {
+    if (-not $compose.Contains($requiredIdentitySetting)) {
+        throw "Bundled identity runtime setting is missing: $requiredIdentitySetting"
+    }
+}
+if ($compose.Contains('start-dev')) {
+    throw 'Bundled identity must not use Keycloak development mode.'
+}
+$keycloakDockerfile = Get-Content -LiteralPath (Join-Path $workspace 'ops/keycloak.Dockerfile') -Raw
+if ($keycloakDockerfile -notmatch 'keycloak:26\.7\.4' -or $keycloakDockerfile -notmatch 'kc\.sh build') {
+    throw 'Bundled identity must use a pinned, optimized Keycloak image.'
 }
 
 $miniappConfiguration = Get-Content -LiteralPath (Join-Path $workspace 'apps/miniapp/src/config.js') -Raw
@@ -128,9 +142,36 @@ try {
     if ([Convert]::FromBase64String([string]$testState.Values['AUTH_JWT_SECRET_BASE64']).Length -ne 32) {
         throw 'Generated JWT signing key is not exactly 256 bits.'
     }
+    if ($testState.Values['PLATFORM_ADMIN_USERNAME'] -notmatch '^platform-admin-[0-9a-f]{8}$' -or
+            $testState.Values['KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME'] -notmatch '^keycloak-admin-[0-9a-f]{8}$') {
+        throw 'Bootstrap administration usernames must be generated per deployment.'
+    }
     $initialErrors = @(Test-DeploymentConfiguration -Workspace $testRoot -Values $testState.Values)
-    if (-not ($initialErrors -match 'OIDC_ISSUER_URI')) {
-        throw 'Fresh configuration must reject missing real OIDC settings.'
+    if ($initialErrors.Count -ne 0 -or $testState.Values['OIDC_ISSUER_URI'] -notmatch '^http://127\.0\.0\.1:' -or
+            $testState.Values['OIDC_JWK_SET_URI'] -notmatch '^http://keycloak:') {
+        throw "Fresh configuration must provide a valid bundled identity service: $($initialErrors -join '; ')"
+    }
+    $realmPath = Export-BundledIdentityConfiguration -Workspace $testRoot -Values $testState.Values
+    $realm = Get-Content -LiteralPath $realmPath -Raw | ConvertFrom-Json
+    if ($realm.realm -ne 'smart-charging' -or $realm.clients[0].clientId -ne 'smart-charging-admin' -or
+            $realm.roles.realm.name -notcontains 'admin') {
+        throw 'Generated bundled identity realm is incomplete.'
+    }
+    $realmText = Get-Content -LiteralPath $realmPath -Raw
+    if ($realmText.Contains([string]$testState.Values['POSTGRES_PASSWORD']) -or
+            $realmText.Contains([string]$testState.Values['KEYCLOAK_DB_PASSWORD']) -or
+            $realmText.Contains([string]$testState.Values['KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD'])) {
+        throw 'Generated realm import contains infrastructure secrets.'
+    }
+    $testState.Values['IDENTITY_PROVIDER_MODE'] = 'external'
+    $testState.Values['OIDC_ISSUER_URI'] = ''
+    $testState.Values['OIDC_JWK_SET_URI'] = ''
+    $testState.Values['VITE_OIDC_AUTHORIZATION_ENDPOINT'] = ''
+    $testState.Values['VITE_OIDC_TOKEN_ENDPOINT'] = ''
+    $testState.Values['VITE_OIDC_CLIENT_ID'] = ''
+    $externalErrors = @(Test-DeploymentConfiguration -Workspace $testRoot -Values $testState.Values)
+    if (-not ($externalErrors -match 'OIDC_ISSUER_URI')) {
+        throw 'External identity mode must reject missing real OIDC settings.'
     }
     $testState.Values['OIDC_ISSUER_URI'] = 'https://identity.test.invalid'
     $testState.Values['VITE_OIDC_AUTHORIZATION_ENDPOINT'] = 'https://identity.test.invalid/authorize'

@@ -20,6 +20,12 @@ if ($configurationErrors.Count -gt 0) {
     throw "Deployment configuration is invalid. Run config-manager.cmd wizard, then config-manager.cmd validate.`n - $($configurationErrors -join "`n - ")"
 }
 [void](Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $configuration)
+$bundledIdentityEnabled = [string]$configuration['IDENTITY_PROVIDER_MODE'] -eq 'bundled'
+if ($bundledIdentityEnabled) {
+    [void](Export-BundledIdentityConfiguration -Workspace $workspace -Values $configuration)
+    $identityDirectory = Resolve-ConfigurationDirectory -Workspace $workspace -ConfiguredPath ([string]$configuration['KEYCLOAK_IMPORT_DIRECTORY'])
+    [Environment]::SetEnvironmentVariable('KEYCLOAK_IMPORT_DIRECTORY', $identityDirectory, 'Process')
+}
 
 $paymentDirectory = Resolve-ConfigurationDirectory -Workspace $workspace -ConfiguredPath ([string]$configuration['WECHAT_PAYMENT_DIRECTORY'])
 if (-not (Test-Path -LiteralPath $paymentDirectory -PathType Container)) {
@@ -41,6 +47,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $compose = @('compose', '--env-file', $environmentFile, '--file', $composeFile)
+$keycloakPort = [string]$configuration['KEYCLOAK_PORT']
+if ($bundledIdentityEnabled) {
+    $compose += @('--profile', 'bundled-identity')
+}
 $deviceGatewayEnabled = Get-ConfigurationBoolean -Values $configuration -Name 'DEVICE_GATEWAY_ENABLED'
 if ($deviceGatewayEnabled) {
     $compose += @('--profile', 'device')
@@ -69,9 +79,14 @@ try {
             $homepageResponse = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/" -TimeoutSec 3 -UseBasicParsing
             $homepageReady = $homepageResponse.StatusCode -eq 200 -and `
                 $homepageResponse.Content -match '<div id="app"></div>'
-            $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady
+            $identityReady = $true
+            if ($bundledIdentityEnabled) {
+                $identity = Invoke-RestMethod -Uri "http://127.0.0.1:$keycloakPort/realms/$([string]$configuration['KEYCLOAK_REALM'])/.well-known/openid-configuration" -TimeoutSec 3
+                $identityReady = -not [string]::IsNullOrWhiteSpace([string]$identity.issuer)
+            }
+            $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and $identityReady
             $lastReadinessStatus = "core=$($core.status), healthz=$($web.StatusCode), " +
-                "homepage=$homepageReady"
+                "homepage=$homepageReady, identity=$identityReady"
         }
         catch {
             $ready = $false
@@ -82,7 +97,9 @@ try {
 
     if (-not $ready) {
         & docker @compose ps --all
-        & docker @compose logs --tail 80 core admin-web
+        $logServices = @('core', 'admin-web')
+        if ($bundledIdentityEnabled) { $logServices += 'keycloak' }
+        & docker @compose logs --tail 80 @logServices
         Write-Warning "Last readiness check: $lastReadinessStatus"
         throw "Services did not become ready within $TimeoutSeconds seconds. Review the container logs above."
     }
@@ -92,13 +109,18 @@ try {
     Write-Host "Admin console: http://127.0.0.1:$adminPort/"
     Write-Host "API through local proxy: http://127.0.0.1:$adminPort/api/v1"
     Write-Host "Core API (diagnostics): http://127.0.0.1:$corePort"
+    if ($bundledIdentityEnabled) {
+        Write-Host "Identity service: http://127.0.0.1:$keycloakPort/"
+        Write-Host 'Initial login: run .\config-manager.cmd credentials' -ForegroundColor Yellow
+        Write-Host 'Before the first login, create your real tenant with .\ops\provision-tenant.ps1 -TenantCode <code> -TenantDisplayName <name>' -ForegroundColor Yellow
+    }
     if ($deviceGatewayEnabled) {
         Write-Host 'Device gateway: enabled with the supplied TLS certificates.'
     }
     else {
         Write-Host 'Device gateway: disabled until real hardware TLS material is supplied.' -ForegroundColor Yellow
     }
-    Write-Host 'No tenant, user, station, device, tariff, order or payment data was created.'
+    Write-Host 'No business tenant, station, device, tariff, order or payment data was created.'
     Write-Host ''
     & docker @compose ps --all
 }

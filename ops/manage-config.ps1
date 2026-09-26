@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('init', 'status', 'validate', 'wizard', 'export-miniapp')]
+    [ValidateSet('init', 'status', 'validate', 'wizard', 'export-miniapp', 'credentials')]
     [string]$Command = 'status'
 )
 
@@ -78,9 +78,21 @@ function Invoke-ConfigurationWizard {
 
     Write-Host ''
     Write-Host 'Existing secrets are never displayed. Press Enter to preserve a value.' -ForegroundColor Cyan
-    Write-Host '1. Identity (a real OIDC provider is required)' -ForegroundColor Cyan
-    foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'API_JWT_AUDIENCE', 'ALLOWED_ORIGINS', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_CLIENT_ID', 'VITE_OIDC_REDIRECT_URI', 'VITE_OIDC_SCOPES')) {
-        Set-ConfigurationValueInteractively -Values $Values -Name $name
+    Write-Host '1. Identity' -ForegroundColor Cyan
+    $bundledIdentity = Read-YesNo -Prompt 'Use the bundled self-hosted identity service' -CurrentValue ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'bundled')
+    if ($bundledIdentity) {
+        $Values['IDENTITY_PROVIDER_MODE'] = 'bundled'
+        [void](Set-BundledIdentityConfiguration -Values $Values)
+        foreach ($name in @('PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME', 'PLATFORM_ADMIN_PASSWORD')) {
+            Set-ConfigurationValueInteractively -Values $Values -Name $name
+        }
+        Write-Host 'Bundled OIDC endpoints are generated automatically. Use config-manager.cmd credentials when you need to view the initial login.' -ForegroundColor Yellow
+    }
+    else {
+        $Values['IDENTITY_PROVIDER_MODE'] = 'external'
+        foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'API_JWT_AUDIENCE', 'ALLOWED_ORIGINS', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_CLIENT_ID', 'VITE_OIDC_REDIRECT_URI', 'VITE_OIDC_SCOPES')) {
+            Set-ConfigurationValueInteractively -Values $Values -Name $name
+        }
     }
 
     Write-Host ''
@@ -136,8 +148,12 @@ function Invoke-ConfigurationWizard {
 
     Write-DeploymentConfiguration -Path (Get-DeploymentConfigurationPath -Workspace $workspace) -Values $Values
     $miniappPath = Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $Values
+    $identityPath = Export-BundledIdentityConfiguration -Workspace $workspace -Values $Values
     Write-Host ''
     Write-Host "Configuration saved. Mini-program configuration generated at: $miniappPath" -ForegroundColor Green
+    if (-not [string]::IsNullOrWhiteSpace($identityPath)) {
+        Write-Host "Bundled identity configuration generated at: $identityPath" -ForegroundColor Green
+    }
 }
 
 function Show-ConfigurationStatus {
@@ -165,6 +181,7 @@ try {
     switch ($Command) {
         'init' {
             $miniappPath = Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $values
+            $identityPath = Export-BundledIdentityConfiguration -Workspace $workspace -Values $values
             if ($state.Created) {
                 Write-Host "Created unified configuration: $($state.Path)" -ForegroundColor Green
             }
@@ -175,7 +192,10 @@ try {
                 Write-Host "Unified configuration already exists: $($state.Path)" -ForegroundColor Green
             }
             Write-Host "Mini-program deployment configuration: $miniappPath"
-            Write-Host 'Next, run .\config-manager.cmd wizard and enter real external configuration.'
+            if (-not [string]::IsNullOrWhiteSpace($identityPath)) {
+                Write-Host "Bundled identity configuration: $identityPath"
+            }
+            Write-Host 'Next, run .\config-manager.cmd validate and then .\docker-start.cmd. Use wizard only to customize integrations.'
         }
         'status' {
             Write-Host "Configuration file: $($state.Path)"
@@ -209,6 +229,21 @@ try {
         'export-miniapp' {
             $miniappPath = Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $values
             Write-Host "Generated mini-program deployment configuration: $miniappPath" -ForegroundColor Green
+        }
+        'credentials' {
+            if ([string]$values['IDENTITY_PROVIDER_MODE'] -ne 'bundled') {
+                throw 'The credentials command is available only when IDENTITY_PROVIDER_MODE=bundled.'
+            }
+            Write-Host 'Sensitive credentials are shown because the credentials command was explicitly requested.' -ForegroundColor Yellow
+            Write-Host "Platform login URL: http://127.0.0.1:$([string]$values['ADMIN_WEB_PORT'])/"
+            Write-Host "Platform username: $([string]$values['PLATFORM_ADMIN_USERNAME'])"
+            Write-Host "Platform subject: $([string]$values['PLATFORM_ADMIN_SUBJECT'])"
+            Write-Host "Platform temporary password: $([string]$values['PLATFORM_ADMIN_PASSWORD'])"
+            Write-Host "Reserved first tenant ID: $([string]$values['INITIAL_TENANT_ID'])"
+            Write-Host "Keycloak admin URL: http://127.0.0.1:$([string]$values['KEYCLOAK_PORT'])/admin/"
+            Write-Host "Keycloak bootstrap username: $([string]$values['KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME'])"
+            Write-Host "Keycloak bootstrap password: $([string]$values['KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD'])"
+            Write-Host 'Change both temporary credentials after the first successful login.' -ForegroundColor Yellow
         }
     }
 }

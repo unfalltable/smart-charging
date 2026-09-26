@@ -19,6 +19,7 @@ if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
 $cleanupOverrides = [ordered]@{
     ADMIN_WEB_PORT = '8088'
     CORE_PORT = '18080'
+    KEYCLOAK_PORT = '19090'
     DEVICE_GATEWAY_PORT = '9000'
     DEVICE_MANAGEMENT_PORT = '9001'
     DEVICE_GATEWAY_BIND_ADDRESS = '127.0.0.1'
@@ -27,12 +28,14 @@ $cleanupOverrides = [ordered]@{
     NATS_PORT = '14222'
     NATS_MONITOR_PORT = '18222'
     WECHAT_PAYMENT_DIRECTORY = [IO.Path]::GetFullPath((Join-Path $workspace 'runtime-secrets/wechat-pay'))
+    KEYCLOAK_IMPORT_DIRECTORY = [IO.Path]::GetFullPath((Join-Path $workspace 'runtime-secrets/keycloak'))
 }
 foreach ($entry in $cleanupOverrides.GetEnumerator()) {
     [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
 }
 
-$arguments = @('compose', '--env-file', $environmentFile, '--file', $composeFile, 'down', '--remove-orphans')
+$arguments = @('compose', '--env-file', $environmentFile, '--file', $composeFile,
+    '--profile', 'bundled-identity', '--profile', 'device', 'down', '--remove-orphans')
 if ($DeleteData) { $arguments += '--volumes' }
 
 Push-Location $workspace

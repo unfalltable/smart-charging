@@ -5,7 +5,12 @@ import io.smartcharge.platform.shared.web.DistributedRateLimitFilter;
 import io.smartcharge.platform.shared.web.RateLimitProperties;
 import io.smartcharge.platform.shared.web.RequestContextFilter;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.springframework.core.convert.converter.Converter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -17,7 +22,13 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -32,6 +43,7 @@ class SecurityConfiguration {
                                            DistributedRateLimitFilter rateLimitFilter,
                                            TenantAccessFilter tenantAccessFilter,
                                            JwtDecoder jwtDecoder,
+                                           Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
                                            @Qualifier("corsConfigurationSource") CorsConfigurationSource cors)
             throws Exception {
         return http
@@ -61,12 +73,30 @@ class SecurityConfiguration {
                                 "/api/v1/customer/**")
                             .hasAuthority("SCOPE_customer")
                         .anyRequest().authenticated())
-                .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.decoder(jwtDecoder)))
+                .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.decoder(jwtDecoder)
+                        .jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 .addFilterBefore(requestContextFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(rateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(tenantFilter, DistributedRateLimitFilter.class)
                 .addFilterAfter(tenantAccessFilter, TenantContextFilter.class)
                 .build();
+    }
+
+    @Bean
+    Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter() {
+        JwtGrantedAuthoritiesConverter standardScopes = new JwtGrantedAuthoritiesConverter();
+        return jwt -> {
+            Set<GrantedAuthority> authorities = new LinkedHashSet<>(standardScopes.convert(jwt));
+            Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
+            Object roles = realmAccess == null ? null : realmAccess.get("roles");
+            if (roles instanceof Collection<?> values) {
+                values.stream().map(String::valueOf)
+                        .filter(role -> role.matches("[A-Za-z0-9_-]{1,64}"))
+                        .map(role -> new SimpleGrantedAuthority("SCOPE_" + role))
+                        .forEach(authorities::add);
+            }
+            return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
+        };
     }
 
     @Bean

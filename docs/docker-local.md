@@ -1,13 +1,13 @@
 # Docker 空库部署
 
-这套 Compose 用于在单机上以生产鉴权行为验证系统。它启动 PostgreSQL、Valkey、NATS、核心 API 和管理后台，但不写入任何租户、用户、场站、设备、费率、订单或支付记录。
+这套 Compose 用于在单机上以生产鉴权行为验证系统。它启动 PostgreSQL、Valkey、NATS、Keycloak、核心 API 和管理后台，但不写入任何业务租户、场站、设备、费率、订单或支付记录。
 
 ## 必需条件
 
 - Docker Desktop 已启动。
-- 可访问的真实 OIDC Issuer，且已创建管理端 PKCE 客户端。
-- OIDC 客户端允许回调 `http://127.0.0.1:8088/`。
-- OIDC 令牌包含服务端配置的 audience；管理账号包含岗位 scope。
+- Docker Desktop 能访问 Docker Hub 和 `quay.io`，或已经配置可用的镜像加速/代理。
+
+默认使用 Compose 内自托管的 Keycloak，不要求事先准备外部 OIDC。若切换到企业已有身份平台，该平台必须支持 Authorization Code + PKCE、配置正确的 audience、岗位角色和回调地址。
 
 ## 配置和启动
 
@@ -15,20 +15,20 @@
 
 ```powershell
 .\config-manager.cmd init
-.\config-manager.cmd wizard
 .\config-manager.cmd validate
 .\docker-start.cmd
 ```
 
-`init` 生成 `.env.docker` 和高强度随机内部秘密；`wizard` 收集真实外部配置；`validate` 一次检查必填值、URL、端口、密钥长度、JSON、证书文件和已启用能力。至少需要提供：
+`init` 生成 `.env.docker`、高强度随机秘密和 Git 忽略的 Keycloak Realm；`validate` 一次检查必填值、URL、端口、密钥长度、JSON、证书文件和已启用能力。原来缺少的以下四项在默认自托管模式中会自动生成，无须手填：
 
 - `OIDC_ISSUER_URI`
 - `VITE_OIDC_AUTHORIZATION_ENDPOINT`
 - `VITE_OIDC_TOKEN_ENDPOINT`
 - `VITE_OIDC_CLIENT_ID`
-- 必要时调整 `APP_JWT_ISSUER`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS`、scope 和回调地址
 
-配置不完整时启动脚本会列出缺失项并停止。运行 `.\config-manager.cmd status` 可以脱敏查看全部配置，不会输出完整密码、AppSecret、APIv3 密钥或主密钥。启动完成后：
+要修改首个管理员名称、接入微信/支付/设备或切换外部 OIDC，再运行 `.\config-manager.cmd wizard`。运行 `.\config-manager.cmd status` 可以脱敏查看全部配置；只有显式运行 `.\config-manager.cmd credentials` 才会显示本机初始登录秘密。
+
+配置不完整时启动脚本会列出缺失项并停止。启动完成后：
 
 如果脚本报告检测到旧演示环境，先确认旧数据无需保留，再执行 `.\docker-stop.cmd -DeleteData`。该命令会删除旧 PostgreSQL、Valkey、NATS 数据卷和旧秘密文件，随后启动会创建全新的空库。
 
@@ -37,18 +37,22 @@
 | 管理后台 | `http://127.0.0.1:8088/` |
 | 反向代理 API | `http://127.0.0.1:8088/api/v1` |
 | 核心健康检查 | `http://127.0.0.1:18080/actuator/health` |
+| 身份服务 | `http://127.0.0.1:19090/` |
 
 ## 开通真实租户
 
-从 OIDC 获取带 `SCOPE_internal` 的服务令牌，仅在当前 PowerShell 会话中设置：
+默认自托管模式已配置一个只能调用内部开通接口的服务账号。填写你自己的真实租户编码和名称：
 
 ```powershell
-$env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
-.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName -AdminSubject $oidcSubject -AdminDisplayName $adminName
-Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
+$tenantCode = Read-Host 'Tenant code (lowercase letters, numbers and hyphens)'
+$tenantName = Read-Host 'Tenant display name'
+.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName
+.\config-manager.cmd credentials
 ```
 
-接口在一个数据库事务内创建真实租户、平台用户和首个 `TENANT_ADMIN` 成员，并写入审计记录。日常成员管理必须从管理后台执行。
+接口在一个数据库事务内创建真实租户、平台用户和首个 `TENANT_ADMIN` 成员，并写入审计记录。然后打开管理后台，用显示的临时密码登录并立即修改密码。日常成员管理必须从管理后台执行。
+
+外部 OIDC 模式不保存外部客户端秘密；开通时仍需在当前 PowerShell 会话提供带 `SCOPE_internal` 的真实服务令牌，并传入 `-AdminSubject` 和 `-AdminDisplayName`。
 
 ## 接入真实设备
 
@@ -79,6 +83,6 @@ Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
 .\docker-stop.cmd -DeleteData
 ```
 
-该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷，无法恢复。
+该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷以及本机秘密文件，无法恢复。
 
 全部字段及生产环境的秘密管理边界见 [统一配置管理](configuration.md)。

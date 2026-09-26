@@ -61,7 +61,9 @@ class TokenConfiguration {
                         "invalid_token", "Required audience is missing", null));
         application.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(properties.appIssuer()), audience));
-        NimbusJwtDecoder oidc = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(properties.oidcIssuerUri());
+        NimbusJwtDecoder oidc = properties.oidcJwkSetUri() == null || properties.oidcJwkSetUri().isBlank()
+                ? (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(properties.oidcIssuerUri())
+                : NimbusJwtDecoder.withJwkSetUri(properties.oidcJwkSetUri()).build();
         oidc.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(properties.oidcIssuerUri()), audience));
         return token -> {

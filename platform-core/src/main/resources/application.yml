@@ -40,6 +40,7 @@ charging:
     app-issuer: ${APP_JWT_ISSUER}
     app-jwt-secret-base64: ${AUTH_JWT_SECRET_BASE64}
     oidc-issuer-uri: ${OIDC_ISSUER_URI}
+    oidc-jwk-set-uri: ${OIDC_JWK_SET_URI:}
     api-audience: ${API_JWT_AUDIENCE:smart-charging-api}
     access-token-minutes: ${ACCESS_TOKEN_MINUTES:15}
     refresh-token-days: ${REFRESH_TOKEN_DAYS:30}

@@ -7,10 +7,12 @@ services:
       POSTGRES_DB: charging
       POSTGRES_USER: charging_app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
+      - ./postgres-init-keycloak.sh:/docker-entrypoint-initdb.d/20-keycloak.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U charging_app -d charging"]
       interval: 5s
@@ -58,6 +60,66 @@ services:
     restart: unless-stopped
     mem_limit: 256m
 
+  keycloak:
+    profiles: ["bundled-identity"]
+    build:
+      context: ..
+      dockerfile: ops/keycloak.Dockerfile
+      args:
+        KEYCLOAK_IMAGE: ${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.4}
+    command:
+      - start
+      - --optimized
+      - --import-realm
+      - --http-enabled=true
+      - --server-async-bootstrap=false
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak_app
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:?KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME is required}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:?KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD is required}
+      KC_HOSTNAME: http://127.0.0.1:${KEYCLOAK_PORT:-19090}
+      KC_HTTP_PORT: ${KEYCLOAK_PORT:-19090}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      JAVA_OPTS_KC_HEAP: -XX:InitialRAMPercentage=25 -XX:MaxRAMPercentage=65
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-19090}:${KEYCLOAK_PORT:-19090}"
+    volumes:
+      - ${KEYCLOAK_IMPORT_DIRECTORY:-../runtime-secrets/keycloak}:/opt/keycloak/data/import:ro
+    depends_on:
+      keycloak-database-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bash", "-c", "{ printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&0; grep -q 'HTTP/1.[01] 200'; } 0<>/dev/tcp/localhost/9000"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 18
+    restart: unless-stopped
+    mem_limit: 1024m
+
+  keycloak-database-init:
+    profiles: ["bundled-identity"]
+    image: postgres:18-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: charging
+      POSTGRES_USER: charging_app
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+    volumes:
+      - ./postgres-init-keycloak.sh:/usr/local/bin/init-keycloak-database.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/init-keycloak-database.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    mem_limit: 128m
+
   core:
     build:
       context: ..
@@ -78,6 +140,7 @@ services:
       AUTH_JWT_SECRET_BASE64: ${AUTH_JWT_SECRET_BASE64:?AUTH_JWT_SECRET_BASE64 is required}
       APP_JWT_ISSUER: ${APP_JWT_ISSUER:-}
       OIDC_ISSUER_URI: ${OIDC_ISSUER_URI:-}
+      OIDC_JWK_SET_URI: ${OIDC_JWK_SET_URI:-}
       API_JWT_AUDIENCE: ${API_JWT_AUDIENCE:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       WECHAT_IDENTITY_ENABLED: ${WECHAT_IDENTITY_ENABLED:-false}
@@ -109,6 +172,9 @@ services:
         condition: service_started
       valkey:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     mem_limit: 1024m
     volumes:

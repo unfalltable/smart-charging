@@ -23,6 +23,7 @@ license terms.
 | PostgreSQL container image | PostgreSQL License and bundled component licenses |
 | Valkey container image | BSD 3-Clause License and bundled component licenses |
 | NATS Server container image | Apache License 2.0 and bundled component licenses |
+| Keycloak identity server container image | Apache License 2.0 and bundled component licenses |
 | Alpine Linux base images | Bundled package licenses |
 
 No dependency listed here grants rights to the proprietary first-party source code. Release packaging must include the

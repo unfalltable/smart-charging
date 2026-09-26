@@ -30,8 +30,10 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'DEVICE_CREDENTIAL_MASTER_KEY_BASE64' 'Core secrets' $true $true '' 'Base64_32' 'Device credential AES-256 master key'
     New-ConfigurationDefinition 'AUTH_JWT_SECRET_BASE64' 'Core secrets' $true $true '' 'Base64_32' 'Platform access-token signing key'
 
+    New-ConfigurationDefinition 'IDENTITY_PROVIDER_MODE' 'Identity' $true $false 'bundled' '' 'Identity provider mode: bundled or external'
     New-ConfigurationDefinition 'APP_JWT_ISSUER' 'Identity' $true $false 'http://127.0.0.1:8088' '' 'Issuer for platform-issued tokens'
     New-ConfigurationDefinition 'OIDC_ISSUER_URI' 'Identity' $true $false '' '' 'External OIDC issuer URI'
+    New-ConfigurationDefinition 'OIDC_JWK_SET_URI' 'Identity' $false $false '' '' 'Optional internal OIDC JSON Web Key Set URI'
     New-ConfigurationDefinition 'API_JWT_AUDIENCE' 'Identity' $true $false 'smart-charging-api' '' 'API JWT audience'
     New-ConfigurationDefinition 'ALLOWED_ORIGINS' 'Identity' $true $false 'http://127.0.0.1:8088,http://localhost:8088' '' 'Comma-separated admin web origins'
     New-ConfigurationDefinition 'VITE_OIDC_AUTHORIZATION_ENDPOINT' 'Identity' $true $false '' '' 'OIDC authorization endpoint'
@@ -39,6 +41,22 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'VITE_OIDC_CLIENT_ID' 'Identity' $true $false '' '' 'Admin web OIDC public client ID'
     New-ConfigurationDefinition 'VITE_OIDC_REDIRECT_URI' 'Identity' $true $false 'http://127.0.0.1:8088/auth/callback' '' 'Admin web login callback URI'
     New-ConfigurationDefinition 'VITE_OIDC_SCOPES' 'Identity' $true $false 'openid profile offline_access admin operator finance auditor support' '' 'OIDC scopes requested by the admin web'
+
+    New-ConfigurationDefinition 'KEYCLOAK_IMAGE' 'Bundled identity' $true $false 'quay.io/keycloak/keycloak:26.7.4' '' 'Pinned official Keycloak container image'
+    New-ConfigurationDefinition 'KEYCLOAK_PORT' 'Bundled identity' $true $false '19090' '' 'Bundled Keycloak HTTP port on loopback'
+    New-ConfigurationDefinition 'KEYCLOAK_REALM' 'Bundled identity' $true $false 'smart-charging' '' 'Bundled Keycloak realm'
+    New-ConfigurationDefinition 'KEYCLOAK_CLIENT_ID' 'Bundled identity' $true $false 'smart-charging-admin' '' 'Bundled admin-web public client ID'
+    New-ConfigurationDefinition 'KEYCLOAK_PROVISIONING_CLIENT_ID' 'Bundled identity' $true $false 'smart-charging-provisioner' '' 'Tenant provisioning service client ID'
+    New-ConfigurationDefinition 'KEYCLOAK_PROVISIONING_CLIENT_SECRET' 'Bundled identity' $true $true '' 'Hex64' 'Tenant provisioning service client secret'
+    New-ConfigurationDefinition 'KEYCLOAK_DB_PASSWORD' 'Bundled identity' $true $true '' 'Hex64' 'Bundled Keycloak database password'
+    New-ConfigurationDefinition 'KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME' 'Bundled identity' $true $false '' 'KeycloakAdminUsername' 'Keycloak bootstrap administration username'
+    New-ConfigurationDefinition 'KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD' 'Bundled identity' $true $true '' 'Hex64' 'Keycloak bootstrap administration password'
+    New-ConfigurationDefinition 'PLATFORM_ADMIN_USERNAME' 'Bundled identity' $true $false '' 'PlatformAdminUsername' 'Initial platform administrator username'
+    New-ConfigurationDefinition 'PLATFORM_ADMIN_DISPLAY_NAME' 'Bundled identity' $true $false 'Platform Administrator' '' 'Initial platform administrator display name'
+    New-ConfigurationDefinition 'PLATFORM_ADMIN_SUBJECT' 'Bundled identity' $true $false '' 'Uuid' 'Stable initial platform administrator subject'
+    New-ConfigurationDefinition 'PLATFORM_ADMIN_PASSWORD' 'Bundled identity' $true $true '' 'Hex64' 'Initial platform administrator password'
+    New-ConfigurationDefinition 'INITIAL_TENANT_ID' 'Bundled identity' $true $false '' 'Uuid' 'Reserved identifier for the first real tenant'
+    New-ConfigurationDefinition 'KEYCLOAK_IMPORT_DIRECTORY' 'Bundled identity' $true $false 'runtime-secrets/keycloak' '' 'Generated Keycloak realm import directory'
 
     New-ConfigurationDefinition 'WECHAT_IDENTITY_ENABLED' 'WeChat identity' $true $false 'false' '' 'Enable WeChat mini-program login'
     New-ConfigurationDefinition 'WECHAT_APP_ID' 'WeChat identity' $false $false '' '' 'WeChat mini-program AppID'
@@ -120,6 +138,17 @@ function New-GeneratedConfigurationValue {
         }
         'Base64_32' {
             return [Convert]::ToBase64String((New-RandomBytes -Length 32))
+        }
+        'Uuid' {
+            return [guid]::NewGuid().ToString()
+        }
+        'KeycloakAdminUsername' {
+            $suffix = -join ((New-RandomBytes -Length 4) | ForEach-Object { $_.ToString('x2') })
+            return "keycloak-admin-$suffix"
+        }
+        'PlatformAdminUsername' {
+            $suffix = -join ((New-RandomBytes -Length 4) | ForEach-Object { $_.ToString('x2') })
+            return "platform-admin-$suffix"
         }
         default {
             return $Definition.DefaultValue
@@ -211,12 +240,47 @@ function Write-DeploymentConfiguration {
     [System.IO.File]::WriteAllLines($Path, $lines, $utf8WithoutBom)
 }
 
+function Set-BundledIdentityConfiguration {
+    param([Parameter(Mandatory = $true)][hashtable]$Values)
+
+    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -ne 'bundled') {
+        return $false
+    }
+
+    $identityBase = "http://127.0.0.1:$([string]$Values['KEYCLOAK_PORT'])"
+    $issuer = "$identityBase/realms/$([string]$Values['KEYCLOAK_REALM'])"
+    $internalIssuer = "http://keycloak:$([string]$Values['KEYCLOAK_PORT'])/realms/$([string]$Values['KEYCLOAK_REALM'])"
+    $adminPort = [string]$Values['ADMIN_WEB_PORT']
+    $derived = [ordered]@{
+        APP_JWT_ISSUER = "http://127.0.0.1:$adminPort"
+        OIDC_ISSUER_URI = $issuer
+        OIDC_JWK_SET_URI = "$internalIssuer/protocol/openid-connect/certs"
+        ALLOWED_ORIGINS = "http://127.0.0.1:$adminPort,http://localhost:$adminPort"
+        VITE_OIDC_AUTHORIZATION_ENDPOINT = "$issuer/protocol/openid-connect/auth"
+        VITE_OIDC_TOKEN_ENDPOINT = "$issuer/protocol/openid-connect/token"
+        VITE_OIDC_CLIENT_ID = [string]$Values['KEYCLOAK_CLIENT_ID']
+        VITE_OIDC_REDIRECT_URI = "http://127.0.0.1:$adminPort/auth/callback"
+        VITE_OIDC_SCOPES = 'openid profile email offline_access'
+    }
+    $changed = $false
+    foreach ($entry in $derived.GetEnumerator()) {
+        if ([string]$Values[$entry.Key] -ne $entry.Value) {
+            $Values[$entry.Key] = $entry.Value
+            $changed = $true
+        }
+    }
+    return $changed
+}
+
 function Initialize-DeploymentConfiguration {
     param([Parameter(Mandatory = $true)][string]$Workspace)
 
     $path = Get-DeploymentConfigurationPath -Workspace $Workspace
     $created = -not (Test-Path -LiteralPath $path -PathType Leaf)
     $values = Read-DeploymentConfiguration -Path $path
+    $hadIdentityMode = $values.ContainsKey('IDENTITY_PROVIDER_MODE')
+    $hadExternalIssuer = $values.ContainsKey('OIDC_ISSUER_URI') -and
+        -not [string]::IsNullOrWhiteSpace([string]$values['OIDC_ISSUER_URI'])
     if ($values.ContainsKey('PILOT_DEVICE_SECRET')) {
         throw 'Legacy pilot/demo configuration detected. Delete .env.docker and run config-manager.cmd init to create a clean deployment configuration.'
     }
@@ -227,6 +291,14 @@ function Initialize-DeploymentConfiguration {
             $values[$definition.Name] = New-GeneratedConfigurationValue -Definition $definition
             $changed = $true
         }
+    }
+
+    if (-not $hadIdentityMode -and $hadExternalIssuer) {
+        $values['IDENTITY_PROVIDER_MODE'] = 'external'
+        $changed = $true
+    }
+    if (Set-BundledIdentityConfiguration -Values $values) {
+        $changed = $true
     }
 
     if ($changed) {
@@ -266,7 +338,7 @@ function Test-AbsoluteSecureUrl {
     if ($uri.Scheme -ne 'http') {
         return $false
     }
-    return @('127.0.0.1', 'localhost', '::1') -contains $uri.Host
+    return @('127.0.0.1', 'localhost', '::1') -contains $uri.Host -or $uri.Host.EndsWith('.localhost')
 }
 
 function Test-AbsoluteHttpsUrl {
@@ -304,6 +376,10 @@ function Test-DeploymentConfiguration {
         }
     }
 
+    if (@('bundled', 'external') -notcontains [string]$Values['IDENTITY_PROVIDER_MODE']) {
+        $errors.Add('IDENTITY_PROVIDER_MODE: value must be bundled or external')
+    }
+
     foreach ($name in @('WECHAT_IDENTITY_ENABLED', 'WECHAT_NOTIFICATION_ENABLED', 'WECHAT_PAYMENT_ENABLED', 'DEVICE_GATEWAY_ENABLED')) {
         if ($Values.ContainsKey($name) -and @('true', 'false') -notcontains [string]$Values[$name]) {
             $errors.Add("$($name): value must be true or false")
@@ -315,6 +391,11 @@ function Test-DeploymentConfiguration {
             $errors.Add("$($name): use an absolute HTTPS URL; HTTP is allowed only for loopback development")
         }
     }
+    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'external' -and
+            -not [string]::IsNullOrWhiteSpace([string]$Values['OIDC_JWK_SET_URI']) -and
+            -not (Test-AbsoluteHttpsUrl -Value ([string]$Values['OIDC_JWK_SET_URI']))) {
+        $errors.Add('OIDC_JWK_SET_URI: external key-set URI must use HTTPS')
+    }
 
     if ($Values.ContainsKey('ALLOWED_ORIGINS')) {
         foreach ($origin in ([string]$Values['ALLOWED_ORIGINS']).Split(',')) {
@@ -325,7 +406,8 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    foreach ($name in @('POSTGRES_PASSWORD', 'VALKEY_PASSWORD', 'QR_SIGNING_SECRET')) {
+    foreach ($name in @('POSTGRES_PASSWORD', 'VALKEY_PASSWORD', 'QR_SIGNING_SECRET', 'KEYCLOAK_DB_PASSWORD',
+            'KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD', 'KEYCLOAK_PROVISIONING_CLIENT_SECRET', 'PLATFORM_ADMIN_PASSWORD')) {
         if ($Values.ContainsKey($name) -and ([string]$Values[$name]).Length -lt 32) {
             $errors.Add("$($name): secret must contain at least 32 characters")
         }
@@ -343,7 +425,7 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    $ports = @('ADMIN_WEB_PORT', 'CORE_PORT', 'DEVICE_GATEWAY_PORT', 'DEVICE_MANAGEMENT_PORT', 'POSTGRES_PORT', 'VALKEY_PORT', 'NATS_PORT', 'NATS_MONITOR_PORT')
+    $ports = @('ADMIN_WEB_PORT', 'CORE_PORT', 'KEYCLOAK_PORT', 'DEVICE_GATEWAY_PORT', 'DEVICE_MANAGEMENT_PORT', 'POSTGRES_PORT', 'VALKEY_PORT', 'NATS_PORT', 'NATS_MONITOR_PORT')
     $usedPorts = @{}
     foreach ($name in $ports) {
         $port = 0
@@ -367,6 +449,31 @@ function Test-DeploymentConfiguration {
     $sampleRate = 0.0
     if (-not [double]::TryParse([string]$Values['TRACING_SAMPLE_RATE'], [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$sampleRate) -or $sampleRate -lt 0 -or $sampleRate -gt 1) {
         $errors.Add('TRACING_SAMPLE_RATE: value must be between 0 and 1')
+    }
+
+    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'bundled') {
+        foreach ($name in @('KEYCLOAK_IMAGE', 'KEYCLOAK_REALM', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_PROVISIONING_CLIENT_ID',
+                'KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME', 'PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME',
+                'PLATFORM_ADMIN_SUBJECT', 'INITIAL_TENANT_ID', 'KEYCLOAK_IMPORT_DIRECTORY')) {
+            if ([string]::IsNullOrWhiteSpace([string]$Values[$name])) {
+                $errors.Add("$($name): required when IDENTITY_PROVIDER_MODE=bundled")
+            }
+        }
+        foreach ($name in @('KEYCLOAK_REALM', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_PROVISIONING_CLIENT_ID',
+                'KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME', 'PLATFORM_ADMIN_USERNAME')) {
+            if ([string]$Values[$name] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$') {
+                $errors.Add("$($name): use 3 to 64 letters, digits, dots, underscores or hyphens")
+            }
+        }
+        if ([string]$Values['KEYCLOAK_IMAGE'] -match ':(latest|edge)$') {
+            $errors.Add('KEYCLOAK_IMAGE: use a pinned version, not latest or edge')
+        }
+        foreach ($name in @('PLATFORM_ADMIN_SUBJECT', 'INITIAL_TENANT_ID')) {
+            $identifier = [guid]::Empty
+            if (-not [guid]::TryParse([string]$Values[$name], [ref]$identifier) -or $identifier -eq [guid]::Empty) {
+                $errors.Add("$($name): value must be a non-zero UUID")
+            }
+        }
     }
 
     if (Get-ConfigurationBoolean -Values $Values -Name 'WECHAT_IDENTITY_ENABLED') {
@@ -495,6 +602,168 @@ function Export-MiniappDeploymentConfiguration {
     $json = $profiles | ConvertTo-Json -Depth 6
     $content = "'use strict'`r`n`r`n// Generated by config-manager.cmd. Do not edit or commit.`r`nmodule.exports = $json`r`n"
     $path = Join-Path $Workspace 'apps/miniapp/src/deployment.config.js'
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($path, $content, $utf8WithoutBom)
+    return $path
+}
+
+function Export-BundledIdentityConfiguration {
+    param(
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][hashtable]$Values
+    )
+
+    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -ne 'bundled') {
+        return ''
+    }
+
+    $roleNames = @('internal', 'admin', 'operator', 'finance', 'auditor', 'support')
+    $realmRoles = @($roleNames | ForEach-Object {
+        [ordered]@{ name = $_; description = "Smart Charging $($_) authority" }
+    })
+    $allowedOrigins = @(([string]$Values['ALLOWED_ORIGINS']).Split(',') |
+        ForEach-Object { $_.Trim().TrimEnd('/') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $redirectUris = @($allowedOrigins | ForEach-Object { "$_/*" })
+    $configuredRedirect = [string]$Values['VITE_OIDC_REDIRECT_URI']
+    if (-not [string]::IsNullOrWhiteSpace($configuredRedirect) -and $redirectUris -notcontains $configuredRedirect) {
+        $redirectUris += $configuredRedirect
+    }
+
+    $platformScope = [ordered]@{
+        name = 'smart-charging-api'
+        description = 'Smart Charging API audience'
+        protocol = 'openid-connect'
+        attributes = [ordered]@{ 'include.in.token.scope' = 'false'; 'display.on.consent.screen' = 'false' }
+        protocolMappers = @(
+            [ordered]@{
+                name = 'platform-api-audience'
+                protocol = 'openid-connect'
+                protocolMapper = 'oidc-audience-mapper'
+                consentRequired = $false
+                config = [ordered]@{
+                    'included.custom.audience' = [string]$Values['API_JWT_AUDIENCE']
+                    'id.token.claim' = 'false'
+                    'access.token.claim' = 'true'
+                    'introspection.token.claim' = 'true'
+                }
+            },
+            [ordered]@{
+                name = 'platform-tenant-ids'
+                protocol = 'openid-connect'
+                protocolMapper = 'oidc-usermodel-attribute-mapper'
+                consentRequired = $false
+                config = [ordered]@{
+                    'user.attribute' = 'tenant_ids'
+                    'claim.name' = 'tenant_ids'
+                    'jsonType.label' = 'String'
+                    'multivalued' = 'true'
+                    'id.token.claim' = 'false'
+                    'access.token.claim' = 'true'
+                    'userinfo.token.claim' = 'false'
+                }
+            }
+        )
+    }
+
+    $realm = [ordered]@{
+        realm = [string]$Values['KEYCLOAK_REALM']
+        displayName = 'Smart Charging Identity'
+        enabled = $true
+        sslRequired = 'none'
+        registrationAllowed = $false
+        registrationEmailAsUsername = $false
+        rememberMe = $false
+        verifyEmail = $false
+        loginWithEmailAllowed = $false
+        duplicateEmailsAllowed = $false
+        resetPasswordAllowed = $true
+        editUsernameAllowed = $false
+        bruteForceProtected = $true
+        permanentLockout = $false
+        maxFailureWaitSeconds = 900
+        minimumQuickLoginWaitSeconds = 60
+        waitIncrementSeconds = 60
+        quickLoginCheckMilliSeconds = 1000
+        maxDeltaTimeSeconds = 43200
+        failureFactor = 5
+        accessTokenLifespan = 900
+        ssoSessionIdleTimeout = 1800
+        ssoSessionMaxLifespan = 36000
+        roles = [ordered]@{ realm = $realmRoles }
+        clientScopes = @($platformScope)
+        clients = @(
+            [ordered]@{
+                clientId = [string]$Values['KEYCLOAK_CLIENT_ID']
+                name = 'Smart Charging Admin Web'
+                enabled = $true
+                protocol = 'openid-connect'
+                publicClient = $true
+                fullScopeAllowed = $true
+                bearerOnly = $false
+                standardFlowEnabled = $true
+                implicitFlowEnabled = $false
+                directAccessGrantsEnabled = $false
+                serviceAccountsEnabled = $false
+                frontchannelLogout = $true
+                redirectUris = $redirectUris
+                webOrigins = $allowedOrigins
+                attributes = [ordered]@{
+                    'pkce.code.challenge.method' = 'S256'
+                    'post.logout.redirect.uris' = '+'
+                }
+                defaultClientScopes = @('web-origins', 'acr', 'profile', 'roles', 'email', 'smart-charging-api')
+                optionalClientScopes = @('address', 'phone', 'offline_access', 'microprofile-jwt')
+            },
+            [ordered]@{
+                clientId = [string]$Values['KEYCLOAK_PROVISIONING_CLIENT_ID']
+                name = 'Smart Charging Tenant Provisioner'
+                enabled = $true
+                protocol = 'openid-connect'
+                publicClient = $false
+                clientAuthenticatorType = 'client-secret'
+                secret = [string]$Values['KEYCLOAK_PROVISIONING_CLIENT_SECRET']
+                bearerOnly = $false
+                fullScopeAllowed = $true
+                standardFlowEnabled = $false
+                implicitFlowEnabled = $false
+                directAccessGrantsEnabled = $false
+                serviceAccountsEnabled = $true
+                defaultClientScopes = @('roles', 'smart-charging-api')
+            }
+        )
+        users = @(
+            [ordered]@{
+                id = [string]$Values['PLATFORM_ADMIN_SUBJECT']
+                username = [string]$Values['PLATFORM_ADMIN_USERNAME']
+                enabled = $true
+                emailVerified = $true
+                firstName = [string]$Values['PLATFORM_ADMIN_DISPLAY_NAME']
+                attributes = [ordered]@{ tenant_ids = @([string]$Values['INITIAL_TENANT_ID']) }
+                requiredActions = @('UPDATE_PASSWORD')
+                credentials = @(
+                    [ordered]@{
+                        type = 'password'
+                        value = [string]$Values['PLATFORM_ADMIN_PASSWORD']
+                        temporary = $true
+                    }
+                )
+                realmRoles = $roleNames
+            },
+            [ordered]@{
+                username = "service-account-$([string]$Values['KEYCLOAK_PROVISIONING_CLIENT_ID'])"
+                enabled = $true
+                serviceAccountClientId = [string]$Values['KEYCLOAK_PROVISIONING_CLIENT_ID']
+                realmRoles = @('internal')
+            }
+        )
+    }
+
+    $directory = Resolve-ConfigurationDirectory -Workspace $Workspace -ConfiguredPath ([string]$Values['KEYCLOAK_IMPORT_DIRECTORY'])
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        [void](New-Item -ItemType Directory -Path $directory -Force)
+    }
+    $path = Join-Path $directory 'smart-charging-realm.json'
+    $content = $realm | ConvertTo-Json -Depth 12
     $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($path, $content, $utf8WithoutBom)
     return $path

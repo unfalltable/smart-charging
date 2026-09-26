@@ -37,7 +37,7 @@ final class TenantProvisioningController {
     @ResponseStatus(HttpStatus.CREATED)
     ProvisionedTenant create(@Valid @RequestBody ProvisionTenantRequest request) {
         return transactions.execute(status -> {
-            UUID tenantId = UUID.randomUUID();
+            UUID tenantId = request.tenantId() == null ? UUID.randomUUID() : request.tenantId();
             jdbc.update("""
                     insert into tenant (id, code, display_name, status)
                     values (?, ?, ?, 'ACTIVE')
@@ -65,6 +65,7 @@ final class TenantProvisioningController {
     }
 
     record ProvisionTenantRequest(
+            UUID tenantId,
             @NotBlank @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,62}") String code,
             @NotBlank @Size(max = 160) String displayName,
             @NotBlank @Size(max = 160) String adminSubject,

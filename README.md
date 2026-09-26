@@ -10,7 +10,7 @@
 - 订单幂等、充电口并发锁、outbox/inbox、支付回调验签、主动查单和异常恢复。
 - Netty 设备网关，支持双向 TLS、HMAC、时间窗和 Valkey 分布式 nonce 防重放。
 - 微信小程序 code2Session 登录、访问令牌、刷新令牌轮换与复用检测。
-- 管理端 OIDC Authorization Code + PKCE、租户角色校验、分布式限流和请求追踪。
+- 管理端 OIDC Authorization Code + PKCE、可选自托管 Keycloak、租户角色校验、分布式限流和请求追踪。
 - 微信支付 APIv3 官方 Java SDK、退款、订阅消息发送和外部秘密引用。
 - 设备密钥在线生成与轮换，AES-256-GCM 加密存入 Valkey。
 
@@ -26,21 +26,22 @@
 
 ```powershell
 .\config-manager.cmd init
-.\config-manager.cmd wizard
 .\config-manager.cmd validate
 .\docker-start.cmd
 ```
 
-配置管理器把部署参数写入 Git 忽略的 `.env.docker`，自动生成强随机内部秘密，交互收集真实 OIDC、微信、支付证书、设备 TLS 和小程序环境，并在启动前统一校验。运行 `.\config-manager.cmd status` 可脱敏查看配置状态。系统不会自动创建任何业务记录。
+配置管理器把部署参数写入 Git 忽略的 `.env.docker`，自动生成强随机内部秘密和本机自托管 Keycloak 配置，并在启动前统一校验。默认不需要另购或手工填写 OIDC 服务；需要接入企业已有身份平台时，再运行 `.\config-manager.cmd wizard` 切换为外部 OIDC。微信、支付证书、设备 TLS 和小程序正式环境仍必须使用真实资料。运行 `.\config-manager.cmd status` 可脱敏查看配置状态。系统不会自动创建任何业务记录。
 
 如果电脑以前运行过带固定试用数据的旧版本，启动脚本会拒绝沿用旧数据卷。确认旧数据不需要保留后执行 `.\docker-stop.cmd -DeleteData`，再重新启动，即可得到空库和全新的秘密。
 
-首个租户和管理员使用具有 `SCOPE_internal` 的真实 OIDC 服务令牌开通：
+启动完成后，先创建自己的真实租户，再使用配置管理器明确读取一次初始登录信息：
 
 ```powershell
-$env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
-.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName -AdminSubject $oidcSubject -AdminDisplayName $adminName
+.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName
+.\config-manager.cmd credentials
 ```
+
+自托管模式会用专用、最小权限的服务账号获取开通令牌，不需要把令牌写入配置文件。初始平台密码是临时密码，首次登录必须修改。若切换到外部 OIDC，开通脚本仍要求显式提供真实的 `INTERNAL_PROVISIONING_TOKEN`、管理员 subject 和显示名称。
 
 真实设备网关默认不启动。准备好设备协议适配器和 mTLS 证书后，通过配置向导启用；启动脚本会检查三份真实证书后才加载网关容器。
 
