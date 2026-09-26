@@ -62,6 +62,21 @@ try {
     if ($bundledIdentityEnabled) {
         & docker image inspect 'smart-charging-local-keycloak:latest' --format '{{.Id}}' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
+            $existingKeycloakContainer = @(& docker @compose ps --all --quiet keycloak 2>$null) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                Select-Object -First 1
+            if (-not [string]::IsNullOrWhiteSpace([string]$existingKeycloakContainer)) {
+                $existingKeycloakImage = [string](& docker container inspect `
+                    --format '{{.Image}}' $existingKeycloakContainer 2>$null)
+                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingKeycloakImage)) {
+                    & docker image tag $existingKeycloakImage 'smart-charging-local-keycloak:latest'
+                    if ($LASTEXITCODE -ne 0) { throw 'Existing Keycloak image could not be assigned its stable local tag.' }
+                    Write-Host 'Recovered the optimized Keycloak image from the existing local container.' -ForegroundColor DarkGray
+                }
+            }
+        }
+        & docker image inspect 'smart-charging-local-keycloak:latest' --format '{{.Id}}' 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
             $buildServices += 'keycloak'
             Write-Host 'No optimized local Keycloak image was found; building it once.' -ForegroundColor Yellow
         }

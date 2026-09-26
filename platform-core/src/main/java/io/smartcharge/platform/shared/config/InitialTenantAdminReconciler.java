@@ -76,9 +76,8 @@ final class InitialTenantAdminReconciler {
                     .noneMatch(authority -> "SCOPE_admin".equals(authority.getAuthority()))) {
             return false;
         }
-        String username = jwt.getToken().getClaimAsString("preferred_username");
         String subject = jwt.getToken().getSubject();
-        return initialAdminUsername.equals(username) && subject != null && !subject.isBlank();
+        return subject != null && !subject.isBlank();
     }
 
     private void recordReconciliation(UUID tenantId, String subject) {

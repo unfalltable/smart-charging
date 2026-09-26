@@ -59,6 +59,8 @@ if (($startScript -notmatch 'without seeding business data') -or
     throw 'Startup output must explicitly confirm that no business records were seeded.'
 }
 if ($startScript -notmatch "image inspect 'smart-charging-local-keycloak:latest'" -or
+        $startScript -notmatch 'docker @compose ps --all --quiet keycloak' -or
+        $startScript -notmatch "docker image tag .*'smart-charging-local-keycloak:latest'" -or
         $startScript -notmatch 'up --detach --no-build' -or
         $startScript -match 'up --detach --build') {
     throw 'Startup must reuse the optimized local Keycloak image instead of contacting its registry on every run.'

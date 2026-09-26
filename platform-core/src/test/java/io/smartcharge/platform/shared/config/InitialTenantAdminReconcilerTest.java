@@ -70,11 +70,21 @@ class InitialTenantAdminReconcilerTest {
     }
 
     @Test
-    void rejectsAnAdminWhoseVerifiedUsernameDoesNotMatch() {
+    void acceptsTheTrustedAdminRoleWhenTheOptionalUsernameClaimChanges() {
+        UUID userId = UUID.randomUUID();
+        when(jdbc.queryForObject(argThat(sql -> sql != null && sql.contains("from tenant where id")),
+                eq(Boolean.class), eq(tenantId))).thenReturn(true);
+        when(jdbc.queryForObject(argThat(sql -> sql != null && sql.contains("insert into platform_user")),
+                eq(UUID.class), any(UUID.class), eq("real-keycloak-subject"), eq("Platform Owner")))
+                .thenReturn(userId);
+        when(jdbc.queryForObject(argThat(sql -> sql != null && sql.contains("from platform_user where id")),
+                eq(String.class), eq(userId))).thenReturn("ACTIVE");
+        when(jdbc.queryForObject(argThat(sql -> sql != null && sql.contains("role_code='TENANT_ADMIN'")),
+                eq(Boolean.class), eq(tenantId), eq(userId))).thenReturn(true);
+
         boolean reconciled = reconciler.reconcile(tenantId, authentication(true, "another-user"));
 
-        assertThat(reconciled).isFalse();
-        verify(tenantJdbc, never()).readWriteAs(any(UUID.class), any());
+        assertThat(reconciled).isTrue();
     }
 
     private JwtAuthenticationToken authentication(boolean admin, String username) {
