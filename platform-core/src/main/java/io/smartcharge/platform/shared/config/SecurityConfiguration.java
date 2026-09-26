@@ -83,7 +83,8 @@ class SecurityConfiguration {
     }
 
     @Bean
-    Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter() {
+    Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter(
+            @Value("${charging.security.provisioning-client-id:}") String provisioningClientId) {
         JwtGrantedAuthoritiesConverter standardScopes = new JwtGrantedAuthoritiesConverter();
         return jwt -> {
             Set<GrantedAuthority> authorities = new LinkedHashSet<>(standardScopes.convert(jwt));
@@ -94,6 +95,10 @@ class SecurityConfiguration {
                         .filter(role -> role.matches("[A-Za-z0-9_-]{1,64}"))
                         .map(role -> new SimpleGrantedAuthority("SCOPE_" + role))
                         .forEach(authorities::add);
+            }
+            String authorizedParty = jwt.getClaimAsString("azp");
+            if (!provisioningClientId.isBlank() && provisioningClientId.equals(authorizedParty)) {
+                authorities.add(new SimpleGrantedAuthority("SCOPE_internal"));
             }
             return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
         };

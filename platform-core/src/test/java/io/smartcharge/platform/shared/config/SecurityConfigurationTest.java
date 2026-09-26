@@ -24,13 +24,31 @@ class SecurityConfigurationTest {
                 .build();
 
         Converter<Jwt, AbstractAuthenticationToken> converter =
-                new SecurityConfiguration().jwtAuthenticationConverter();
+                new SecurityConfiguration().jwtAuthenticationConverter("smart-charging-provisioner");
         AbstractAuthenticationToken authentication = converter.convert(jwt);
 
         assertThat(authentication).isNotNull();
         assertThat(authentication.getName()).isEqualTo("subject-id");
         assertThat(authentication.getAuthorities()).extracting("authority")
                 .contains("SCOPE_profile", "SCOPE_admin", "SCOPE_operator")
-                .doesNotContain("SCOPE_invalid role");
+                .doesNotContain("SCOPE_invalid role", "SCOPE_internal");
+    }
+
+    @Test
+    void grantsInternalAuthorityOnlyToTheConfiguredProvisioningClient() {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "none")
+                .subject("service-account-subject")
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .claim("azp", "smart-charging-provisioner")
+                .build();
+
+        AbstractAuthenticationToken authentication = new SecurityConfiguration()
+                .jwtAuthenticationConverter("smart-charging-provisioner").convert(jwt);
+
+        assertThat(authentication).isNotNull();
+        assertThat(authentication.getAuthorities()).extracting("authority")
+                .containsExactly("SCOPE_internal");
     }
 }

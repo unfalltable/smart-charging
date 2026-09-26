@@ -77,7 +77,7 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
 }
 foreach ($requiredIdentitySetting in @('profiles: ["bundled-identity"]', 'start', '--optimized', '--import-realm',
         'KC_BOOTSTRAP_ADMIN_PASSWORD', 'OIDC_JWK_SET_URI', 'postgres-init-keycloak.sh',
-        'service_completed_successfully')) {
+        'INTERNAL_PROVISIONING_CLIENT_ID', 'service_completed_successfully')) {
     if (-not $compose.Contains($requiredIdentitySetting)) {
         throw "Bundled identity runtime setting is missing: $requiredIdentitySetting"
     }
@@ -166,6 +166,10 @@ try {
             $platformScope.protocolMappers.protocolMapper -notcontains 'oidc-usermodel-attribute-mapper' -or
             $platformScope.protocolMappers.protocolMapper -notcontains 'oidc-usermodel-realm-role-mapper') {
         throw 'Generated platform client scope must include audience, tenant and realm-role claims.'
+    }
+    $platformAdmin = @($realm.users | Where-Object { $_.username -eq $testState.Values['PLATFORM_ADMIN_USERNAME'] })[0]
+    if ($null -eq $platformAdmin -or $platformAdmin.realmRoles -contains 'internal') {
+        throw 'The human platform administrator must not receive the machine-only internal authority.'
     }
     $realmText = Get-Content -LiteralPath $realmPath -Raw
     if ($realmText.Contains([string]$testState.Values['POSTGRES_PASSWORD']) -or

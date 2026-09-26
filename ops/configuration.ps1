@@ -618,6 +618,7 @@ function Export-BundledIdentityConfiguration {
     }
 
     $roleNames = @('internal', 'admin', 'operator', 'finance', 'auditor', 'support')
+    $platformAdminRoleNames = @('admin', 'operator', 'finance', 'auditor', 'support')
     $realmRoles = @($roleNames | ForEach-Object {
         [ordered]@{ name = $_; description = "Smart Charging $($_) authority" }
     })
@@ -763,7 +764,7 @@ function Export-BundledIdentityConfiguration {
                         temporary = $true
                     }
                 )
-                realmRoles = $roleNames
+                realmRoles = $platformAdminRoleNames
             },
             [ordered]@{
                 username = "service-account-$([string]$Values['KEYCLOAK_PROVISIONING_CLIENT_ID'])"
