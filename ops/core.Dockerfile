@@ -6,11 +6,15 @@ COPY platform-core/pom.xml platform-core/pom.xml
 COPY device-gateway/pom.xml device-gateway/pom.xml
 COPY platform-contracts/src platform-contracts/src
 COPY platform-core/src platform-core/src
+ARG APP_BUILD_REVISION=unknown
+RUN printf 'build.revision=%s\n' "$APP_BUILD_REVISION" > platform-core/src/main/resources/build-revision.properties
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -ntp -pl platform-core -am -DskipTests package && \
     cp platform-core/target/platform-core-*.jar /workspace/app.jar
 
 FROM eclipse-temurin:21-jre-noble
+ARG APP_BUILD_REVISION=unknown
+ENV APP_BUILD_REVISION=${APP_BUILD_REVISION}
 RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app

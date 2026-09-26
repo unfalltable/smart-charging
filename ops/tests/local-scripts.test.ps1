@@ -94,6 +94,12 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
         throw "Docker runtime is not connected to unified setting: $requiredRuntimeSetting"
     }
 }
+foreach ($requiredBuildRevisionSetting in @('APP_BUILD_REVISION', '/actuator/info', 'expectedRevision')) {
+    if ($startScript -notmatch [regex]::Escape($requiredBuildRevisionSetting) -and
+            $compose -notmatch [regex]::Escape($requiredBuildRevisionSetting)) {
+        throw "Runtime build revision verification is missing: $requiredBuildRevisionSetting"
+    }
+}
 foreach ($requiredIdentitySetting in @('profiles: ["bundled-identity"]', 'start', '--optimized', '--import-realm',
         'KC_BOOTSTRAP_ADMIN_PASSWORD', 'OIDC_JWK_SET_URI', 'postgres-init-keycloak.sh',
         'INTERNAL_PROVISIONING_CLIENT_ID', 'IDENTITY_PROVIDER_MODE', 'PLATFORM_ADMIN_USERNAME',

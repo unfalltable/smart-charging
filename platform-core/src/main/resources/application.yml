@@ -34,6 +34,9 @@ server:
   tomcat:
     max-http-form-post-size: 1MB
     max-swallow-size: 1MB
+info:
+  build:
+    revision: ${APP_BUILD_REVISION:unknown}
 charging:
   qr-signing-secret: ${QR_SIGNING_SECRET}
   security:
@@ -71,11 +74,16 @@ nats:
 outbox:
   publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:250}
 management:
+  info:
+    env:
+      enabled: true
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
   endpoint:
+    info:
+      access: read-only
     health:
       probes:
         enabled: true

@@ -22,7 +22,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "charging.qr-signing-secret=startup-test-qr-key-at-least-32-characters",
         "charging.device-credentials.master-key-base64=",
-        "spring.flyway.enabled=true"
+        "spring.flyway.enabled=true",
+        "management.endpoints.web.exposure.include=health,info",
+        "management.endpoint.info.access=read-only",
+        "management.info.env.enabled=true",
+        "info.build.revision=unknown"
 })
 class ProductionApplicationStartupTest {
     @MockitoBean DataSource dataSource;
@@ -42,6 +46,11 @@ class ProductionApplicationStartupTest {
                     HttpResponse.BodyHandlers.ofString());
             assertThat(response.statusCode()).isEqualTo(200);
             assertThat(response.body()).contains("\"status\":\"UP\"");
+            var info = client.send(HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + port + "/actuator/info")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(info.statusCode()).isEqualTo(200);
+            assertThat(info.body()).contains("\"revision\":\"unknown\"");
         }
     }
 }

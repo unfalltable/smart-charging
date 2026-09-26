@@ -125,7 +125,10 @@ services:
     build:
       context: ..
       dockerfile: ops/core.Dockerfile
+      args:
+        APP_BUILD_REVISION: ${APP_BUILD_REVISION:?APP_BUILD_REVISION is required}
     environment:
+      APP_BUILD_REVISION: ${APP_BUILD_REVISION:?APP_BUILD_REVISION is required}
       SPRING_PROFILES_ACTIVE: production
       DATABASE_URL: jdbc:postgresql://postgres:5432/charging
       DATABASE_USER: charging_app

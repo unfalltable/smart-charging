@@ -71,13 +71,15 @@ final class InitialTenantAdminReconciler {
     private boolean eligible(UUID tenantId, Authentication authentication) {
         if (!"bundled".equals(identityProviderMode) || initialTenantId == null
                 || !initialTenantId.equals(tenantId)
-                || !(authentication instanceof JwtAuthenticationToken jwt)
-                || authentication.getAuthorities().stream()
-                    .noneMatch(authority -> "SCOPE_admin".equals(authority.getAuthority()))) {
+                || !(authentication instanceof JwtAuthenticationToken jwt)) {
             return false;
         }
+        boolean adminAuthority = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "SCOPE_admin".equals(authority.getAuthority()));
+        String username = jwt.getToken().getClaimAsString("preferred_username");
+        boolean configuredAdmin = !initialAdminUsername.isBlank() && initialAdminUsername.equals(username);
         String subject = jwt.getToken().getSubject();
-        return subject != null && !subject.isBlank();
+        return (adminAuthority || configuredAdmin) && subject != null && !subject.isBlank();
     }
 
     private void recordReconciliation(UUID tenantId, String subject) {

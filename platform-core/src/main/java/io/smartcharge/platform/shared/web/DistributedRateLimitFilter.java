@@ -36,7 +36,8 @@ public final class DistributedRateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().startsWith("/actuator/health");
+        String path = request.getRequestURI();
+        return path.startsWith("/actuator/health") || path.equals("/actuator/info");
     }
 
     @Override

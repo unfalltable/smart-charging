@@ -45,6 +45,12 @@ docker info --format '{{.ServerVersion}}' | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw 'The Docker service is not running. Start Docker Desktop first.'
 }
+$buildRevision = [string](& git -C $workspace rev-parse --verify HEAD)
+if ($LASTEXITCODE -ne 0 -or $buildRevision -notmatch '^[0-9a-f]{40}$') {
+    throw 'The current Git revision could not be determined.'
+}
+$buildRevision = $buildRevision.Trim()
+[Environment]::SetEnvironmentVariable('APP_BUILD_REVISION', $buildRevision, 'Process')
 
 $compose = @('compose', '--env-file', $environmentFile, '--file', $composeFile)
 $keycloakPort = [string]$configuration['KEYCLOAK_PORT']
@@ -103,6 +109,7 @@ try {
     do {
         try {
             $core = Invoke-RestMethod -Uri "http://127.0.0.1:$corePort/actuator/health/readiness" -TimeoutSec 3
+            $build = Invoke-RestMethod -Uri "http://127.0.0.1:$corePort/actuator/info" -TimeoutSec 3
             $web = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/healthz" -TimeoutSec 3 -UseBasicParsing
             $homepageResponse = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/" -TimeoutSec 3 -UseBasicParsing
             $homepageReady = $homepageResponse.StatusCode -eq 200 -and `
@@ -112,9 +119,12 @@ try {
                 $identity = Invoke-RestMethod -Uri "http://127.0.0.1:$keycloakPort/realms/$([string]$configuration['KEYCLOAK_REALM'])/.well-known/openid-configuration" -TimeoutSec 3
                 $identityReady = -not [string]::IsNullOrWhiteSpace([string]$identity.issuer)
             }
-            $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and $identityReady
+            $revisionReady = [string]$build.build.revision -eq $buildRevision
+            $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and `
+                $identityReady -and $revisionReady
             $lastReadinessStatus = "core=$($core.status), healthz=$($web.StatusCode), " +
-                "homepage=$homepageReady, identity=$identityReady"
+                "homepage=$homepageReady, identity=$identityReady, revision=$([string]$build.build.revision), " +
+                "expectedRevision=$buildRevision"
         }
         catch {
             $ready = $false
