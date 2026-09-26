@@ -57,14 +57,27 @@ if ($deviceGatewayEnabled) {
 }
 Push-Location $workspace
 try {
+    $buildServices = @('core', 'admin-web')
+    if ($deviceGatewayEnabled) { $buildServices += 'device-gateway' }
+    if ($bundledIdentityEnabled) {
+        & docker image inspect 'smart-charging-local-keycloak:latest' --format '{{.Id}}' 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $buildServices += 'keycloak'
+            Write-Host 'No optimized local Keycloak image was found; building it once.' -ForegroundColor Yellow
+        }
+        else {
+            Write-Host 'Reusing the optimized local Keycloak image; no registry access is required for it.' -ForegroundColor DarkGray
+        }
+    }
+
+    & docker @compose build @buildServices
+    if ($LASTEXITCODE -ne 0) { throw 'Docker image build failed.' }
     if ($BuildOnly) {
-        & docker @compose build
-        if ($LASTEXITCODE -ne 0) { throw 'Docker image build failed.' }
         Write-Host 'All Docker images were built successfully.' -ForegroundColor Green
         exit 0
     }
 
-    & docker @compose up --detach --build --remove-orphans
+    & docker @compose up --detach --no-build --remove-orphans
     if ($LASTEXITCODE -ne 0) { throw 'Docker Compose startup failed.' }
 
     $adminPort = [string]$configuration['ADMIN_WEB_PORT']
@@ -105,7 +118,7 @@ try {
     }
 
     Write-Host ''
-    Write-Host 'The production-mode charging platform is ready with an empty business database.' -ForegroundColor Green
+    Write-Host 'The production-mode charging platform is ready without seeding business data.' -ForegroundColor Green
     Write-Host "Admin console: http://127.0.0.1:$adminPort/"
     Write-Host "API through local proxy: http://127.0.0.1:$adminPort/api/v1"
     Write-Host "Core API (diagnostics): http://127.0.0.1:$corePort"
@@ -120,7 +133,7 @@ try {
     else {
         Write-Host 'Device gateway: disabled until real hardware TLS material is supplied.' -ForegroundColor Yellow
     }
-    Write-Host 'No business tenant, station, device, tariff, order or payment data was created.'
+    Write-Host 'Startup did not create any tenant, station, device, tariff, order or payment data.'
     Write-Host ''
     & docker @compose ps --all
 }

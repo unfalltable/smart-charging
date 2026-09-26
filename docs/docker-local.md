@@ -19,6 +19,8 @@
 .\docker-start.cmd
 ```
 
+启动器会复用已经构建成功的本地 Keycloak 优化镜像，日常重启或更新业务代码时不会再次访问 `quay.io`。只有本机从未成功构建过该镜像时才需要连接官方 Keycloak 镜像仓库。
+
 `init` 生成 `.env.docker`、高强度随机秘密和 Git 忽略的 Keycloak Realm；`validate` 一次检查必填值、URL、端口、密钥长度、JSON、证书文件和已启用能力。原来缺少的以下四项在默认自托管模式中会自动生成，无须手填：
 
 - `OIDC_ISSUER_URI`

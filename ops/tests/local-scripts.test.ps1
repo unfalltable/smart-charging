@@ -54,9 +54,14 @@ foreach ($requiredName in @(
         throw "Unified configuration does not require $requiredName."
     }
 }
-if (($startScript -notmatch 'empty business database') -or
-        ($startScript -notmatch 'No business tenant, station, device, tariff, order or payment data was created')) {
+if (($startScript -notmatch 'without seeding business data') -or
+        ($startScript -notmatch 'Startup did not create any tenant, station, device, tariff, order or payment data')) {
     throw 'Startup output must explicitly confirm that no business records were seeded.'
+}
+if ($startScript -notmatch "image inspect 'smart-charging-local-keycloak:latest'" -or
+        $startScript -notmatch 'up --detach --no-build' -or
+        $startScript -match 'up --detach --build') {
+    throw 'Startup must reuse the optimized local Keycloak image instead of contacting its registry on every run.'
 }
 if ($configurationScript -notmatch 'PILOT_DEVICE_SECRET') {
     throw 'Unified configuration must reject legacy demo configuration.'
@@ -90,7 +95,7 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
 foreach ($requiredIdentitySetting in @('profiles: ["bundled-identity"]', 'start', '--optimized', '--import-realm',
         'KC_BOOTSTRAP_ADMIN_PASSWORD', 'OIDC_JWK_SET_URI', 'postgres-init-keycloak.sh',
         'INTERNAL_PROVISIONING_CLIENT_ID', 'IDENTITY_PROVIDER_MODE', 'PLATFORM_ADMIN_USERNAME',
-        'INITIAL_TENANT_ID', 'service_completed_successfully')) {
+        'INITIAL_TENANT_ID', 'smart-charging-local-keycloak:latest', 'service_completed_successfully')) {
     if (-not $compose.Contains($requiredIdentitySetting)) {
         throw "Bundled identity runtime setting is missing: $requiredIdentitySetting"
     }
