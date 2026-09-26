@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { getJson, patchJson, postJson, type DashboardSummary } from './api/client'
+import { getJson, loadSessionContext, patchJson, postJson, selectTenant,
+  type DashboardSummary, type SessionContext } from './api/client'
 import { initializeAuth, login, logout } from './auth'
 
 type Page = 'dashboard' | 'assets' | 'orders' | 'tariffs' | 'finance' | 'operations' | 'legal' | 'access' | 'audit'
@@ -11,6 +12,8 @@ const loading = ref(false)
 const loadError = ref('')
 const notice = ref('')
 const authenticated = ref(false)
+const sessionContext = ref<SessionContext | null>(null)
+const currentTenantId = ref('')
 const summary = ref<DashboardSummary>({ onlineDevices: 0, totalDevices: 0, availableConnectors: 0, activeOrders: 0, todayRevenueMinor: 0 })
 const stations = ref<Row[]>([]), devices = ref<Row[]>([]), connectors = ref<Row[]>([])
 const orders = ref<Row[]>([]), tariffs = ref<Row[]>([]), payments = ref<Row[]>([]), refunds = ref<Row[]>([])
@@ -31,6 +34,7 @@ const agreementForm = reactive({ documentCode: 'SERVICE_TERMS', version: '', tit
 
 const onlineRate = computed(() => summary.value.totalDevices === 0 ? 0 : Math.round(summary.value.onlineDevices * 100 / summary.value.totalDevices))
 const revenue = computed(() => money(summary.value.todayRevenueMinor))
+const currentTenant = computed(() => sessionContext.value?.tenants.find((tenant) => tenant.id === currentTenantId.value))
 const titles: Record<Page, [string, string]> = {
   dashboard: ['OPERATIONS', '运营总览'], assets: ['ASSETS', '场站设备'], orders: ['ORDERS', '充电订单'],
   tariffs: ['PRICING', '计费策略'], finance: ['FINANCE', '支付与结算'], operations: ['SERVICE', '告警工单'],
@@ -94,9 +98,21 @@ async function createMembership() { await refresh('access', () => postJson('/adm
 async function changeMembership(row: Row, status: string) { await refresh('access', () => patchJson('/admin/access/memberships/status', { membershipId: row.id, status }), '成员权限已更新') }
 async function beginLogin() { try { await login() } catch (error) { loadError.value = error instanceof Error ? error.message : '登录失败' } }
 function signOut() { logout(); authenticated.value = false }
+async function switchTenant() {
+  if (!sessionContext.value) return
+  selectTenant(currentTenantId.value, sessionContext.value)
+  await load(page.value)
+}
 
 onMounted(async () => {
-  try { authenticated.value = await initializeAuth(); if (authenticated.value) await load() }
+  try {
+    authenticated.value = await initializeAuth()
+    if (authenticated.value) {
+      sessionContext.value = await loadSessionContext()
+      currentTenantId.value = sessionStorage.getItem('tenant_id') ?? ''
+      await load()
+    }
+  }
   catch (error) { loadError.value = error instanceof Error ? error.message : '登录失败' }
 })
 </script>
@@ -107,7 +123,15 @@ onMounted(async () => {
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">⚡</span><span>充电运营平台</span></div>
       <nav><button v-for="item in (Object.keys(titles) as Page[])" :key="item" class="nav-item" :class="{ active: page === item }" @click="load(item)">{{ titles[item][1] }}</button></nav>
-      <div class="environment">租户隔离 · 全操作审计<br><button class="link-button" @click="signOut">退出登录</button></div>
+      <div class="environment">
+        <label for="tenant-switcher">当前租户</label>
+        <select id="tenant-switcher" v-model="currentTenantId" :aria-label="`当前租户：${currentTenant?.displayName ?? ''}`" @change="switchTenant">
+          <option v-for="tenant in sessionContext?.tenants ?? []" :key="tenant.id" :value="tenant.id">{{ tenant.displayName }}</option>
+        </select>
+        <span v-if="sessionContext?.platformAdministrator">平台总管理员</span>
+        <span>租户隔离 · 全操作审计</span>
+        <button class="link-button" @click="signOut">退出登录</button>
+      </div>
     </aside>
     <main class="content">
       <header><div><p class="eyebrow">{{ titles[page][0] }}</p><h1>{{ titles[page][1] }}</h1></div><button class="refresh" @click="load()">刷新数据</button></header>

@@ -38,9 +38,9 @@ function claims(token: string): Record<string, unknown> {
 function storeTokens(tokens: TokenResponse) {
   sessionStorage.setItem('access_token', tokens.access_token)
   if (tokens.refresh_token) sessionStorage.setItem('refresh_token', tokens.refresh_token)
-  const tokenClaims = claims(tokens.access_token)
-  const tenants = tokenClaims.tenant_ids
-  if (Array.isArray(tenants) && tenants.length > 0) sessionStorage.setItem('tenant_id', String(tenants[0]))
+  // The API resolves database-backed tenant access after login. Token claims may be stale
+  // after tenant provisioning and must not be treated as the active tenant source of truth.
+  sessionStorage.removeItem('tenant_id')
 }
 
 async function exchange(parameters: URLSearchParams) {

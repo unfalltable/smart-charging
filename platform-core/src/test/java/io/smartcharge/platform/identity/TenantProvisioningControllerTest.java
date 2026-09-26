@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import io.smartcharge.platform.audit.AuditService;
 import io.smartcharge.platform.identity.TenantProvisioningController.ProvisionTenantRequest;
 import io.smartcharge.platform.identity.TenantProvisioningController.TenantIdentity;
+import io.smartcharge.platform.identity.TenantProvisioningController.TenantResolution;
 import io.smartcharge.platform.shared.domain.DomainException;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import java.util.List;
@@ -43,9 +44,9 @@ class TenantProvisioningControllerTest {
                 eq(tenantId), eq("gavin")))
                 .thenReturn(List.of(new TenantIdentity(tenantId, "gavin")));
 
-        boolean created = controller.createOrReconcileTenant(tenantId, request);
+        TenantResolution resolution = controller.createOrReconcileTenant(tenantId, request);
 
-        assertThat(created).isFalse();
+        assertThat(resolution).isEqualTo(new TenantResolution(tenantId, false));
         verify(jdbc).update(anyString(), eq("Gavin"), eq(tenantId));
     }
 
@@ -57,9 +58,9 @@ class TenantProvisioningControllerTest {
                 eq(tenantId), eq("gavin")))
                 .thenReturn(List.of());
 
-        boolean created = controller.createOrReconcileTenant(tenantId, request);
+        TenantResolution resolution = controller.createOrReconcileTenant(tenantId, request);
 
-        assertThat(created).isTrue();
+        assertThat(resolution).isEqualTo(new TenantResolution(tenantId, true));
         verify(jdbc).update(anyString(), eq(tenantId), eq("gavin"), eq("Gavin"));
     }
 
@@ -75,6 +76,21 @@ class TenantProvisioningControllerTest {
                 .isInstanceOf(DomainException.class)
                 .hasMessage("Tenant id is already assigned to a different code");
         verify(jdbc, never()).update(anyString(), any(), any(), any());
+    }
+
+    @Test
+    void reusesTheDatabaseTenantWhenAStaleConfiguredIdUsesTheSameCode() {
+        UUID staleConfiguredId = UUID.randomUUID();
+        UUID databaseTenantId = UUID.randomUUID();
+        ProvisionTenantRequest request = request(staleConfiguredId, "gavin");
+        when(jdbc.query(anyString(), ArgumentMatchers.<RowMapper<TenantIdentity>>any(),
+                eq(staleConfiguredId), eq("gavin")))
+                .thenReturn(List.of(new TenantIdentity(databaseTenantId, "gavin")));
+
+        TenantResolution resolution = controller.createOrReconcileTenant(staleConfiguredId, request);
+
+        assertThat(resolution).isEqualTo(new TenantResolution(databaseTenantId, false));
+        verify(jdbc).update(anyString(), eq("Gavin"), eq(databaseTenantId));
     }
 
     private ProvisionTenantRequest request(UUID tenantId, String code) {

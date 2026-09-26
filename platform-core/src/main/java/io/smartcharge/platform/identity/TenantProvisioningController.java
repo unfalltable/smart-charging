@@ -39,8 +39,9 @@ final class TenantProvisioningController {
     @PostMapping
     ResponseEntity<ProvisionedTenant> create(@Valid @RequestBody ProvisionTenantRequest request) {
         ProvisionedTenant provisioned = Objects.requireNonNull(transactions.execute(status -> {
-            UUID tenantId = request.tenantId() == null ? UUID.randomUUID() : request.tenantId();
-            boolean created = createOrReconcileTenant(tenantId, request);
+            UUID requestedTenantId = request.tenantId() == null ? UUID.randomUUID() : request.tenantId();
+            TenantResolution resolution = createOrReconcileTenant(requestedTenantId, request);
+            UUID tenantId = resolution.tenantId();
             return tenantJdbc.readWriteAs(tenantId, () -> {
                 UUID userId = jdbc.queryForObject("""
                         insert into platform_user (id, subject, display_name, status)
@@ -57,18 +58,19 @@ final class TenantProvisioningController {
                            set status='ACTIVE'
                         returning id
                         """, UUID.class, UUID.randomUUID(), tenantId, userId);
-                audit.record(created ? "TENANT_PROVISIONED" : "TENANT_PROVISIONING_RECONCILED",
+                audit.record(resolution.created() ? "TENANT_PROVISIONED" : "TENANT_PROVISIONING_RECONCILED",
                         "tenant", tenantId, null,
-                        Map.of("code", request.code(), "adminSubject", request.adminSubject()));
+                        Map.of("code", request.code(), "adminSubject", request.adminSubject(),
+                                "requestedTenantId", requestedTenantId));
                 return new ProvisionedTenant(tenantId, request.code(), request.displayName(),
-                        membershipId, request.adminSubject(), created);
+                        membershipId, request.adminSubject(), resolution.created());
             });
         }));
         HttpStatus responseStatus = provisioned.created() ? HttpStatus.CREATED : HttpStatus.OK;
         return ResponseEntity.status(responseStatus).body(provisioned);
     }
 
-    boolean createOrReconcileTenant(UUID tenantId, ProvisionTenantRequest request) {
+    TenantResolution createOrReconcileTenant(UUID tenantId, ProvisionTenantRequest request) {
         List<TenantIdentity> matches = jdbc.query("""
                 select id, code
                   from tenant
@@ -81,22 +83,20 @@ final class TenantProvisioningController {
         if (idMatch != null && !idMatch.code().equals(request.code())) {
             throw new DomainException("Tenant id is already assigned to a different code");
         }
-        if (codeMatch != null && !codeMatch.id().equals(tenantId)) {
-            throw new DomainException("Tenant code is already assigned to a different tenant");
-        }
-        if (idMatch == null) {
+        if (codeMatch == null && idMatch == null) {
             jdbc.update("""
                     insert into tenant (id, code, display_name, status)
                     values (?, ?, ?, 'ACTIVE')
                     """, tenantId, request.code(), request.displayName());
-            return true;
+            return new TenantResolution(tenantId, true);
         }
+        UUID resolvedTenantId = codeMatch == null ? idMatch.id() : codeMatch.id();
         jdbc.update("""
                 update tenant
                    set display_name = ?, updated_at = now(), version = version + 1
                  where id = ?
-                """, request.displayName(), tenantId);
-        return false;
+                """, request.displayName(), resolvedTenantId);
+        return new TenantResolution(resolvedTenantId, false);
     }
 
     record ProvisionTenantRequest(
@@ -110,4 +110,5 @@ final class TenantProvisioningController {
                              UUID adminMembershipId, String adminSubject, boolean created) { }
 
     record TenantIdentity(UUID id, String code) { }
+    record TenantResolution(UUID tenantId, boolean created) { }
 }

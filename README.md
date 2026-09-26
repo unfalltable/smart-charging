@@ -10,7 +10,7 @@
 - 订单幂等、充电口并发锁、outbox/inbox、支付回调验签、主动查单和异常恢复。
 - Netty 设备网关，支持双向 TLS、HMAC、时间窗和 Valkey 分布式 nonce 防重放。
 - 微信小程序 code2Session 登录、访问令牌、刷新令牌轮换与复用检测。
-- 管理端 OIDC Authorization Code + PKCE、可选自托管 Keycloak、租户角色校验、分布式限流和请求追踪。
+- 管理端 OIDC Authorization Code + PKCE、可选自托管 Keycloak、服务端权威租户会话、平台总管理员与下游租户角色分层、分布式限流和请求追踪。
 - 微信支付 APIv3 官方 Java SDK、退款、订阅消息发送和外部秘密引用。
 - 设备密钥在线生成与轮换，AES-256-GCM 加密存入 Valkey。
 

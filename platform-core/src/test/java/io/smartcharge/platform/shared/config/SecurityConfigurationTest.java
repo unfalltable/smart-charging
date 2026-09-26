@@ -24,7 +24,8 @@ class SecurityConfigurationTest {
                 .build();
 
         Converter<Jwt, AbstractAuthenticationToken> converter =
-                new SecurityConfiguration().jwtAuthenticationConverter("smart-charging-provisioner");
+                new SecurityConfiguration().jwtAuthenticationConverter(
+                        "smart-charging-provisioner", "bundled", "platform-admin");
         AbstractAuthenticationToken authentication = converter.convert(jwt);
 
         assertThat(authentication).isNotNull();
@@ -45,10 +46,27 @@ class SecurityConfigurationTest {
                 .build();
 
         AbstractAuthenticationToken authentication = new SecurityConfiguration()
-                .jwtAuthenticationConverter("smart-charging-provisioner").convert(jwt);
+                .jwtAuthenticationConverter("smart-charging-provisioner", "external", "").convert(jwt);
 
         assertThat(authentication).isNotNull();
         assertThat(authentication.getAuthorities()).extracting("authority")
                 .containsExactly("SCOPE_internal");
+    }
+
+    @Test
+    void grantsAdminAuthorityToTheExactConfiguredBundledPlatformAdministrator() {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "none")
+                .subject("verified-platform-owner")
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(60))
+                .claim("preferred_username", "platform-admin")
+                .build();
+
+        AbstractAuthenticationToken authentication = new SecurityConfiguration()
+                .jwtAuthenticationConverter("provisioner", "bundled", "platform-admin").convert(jwt);
+
+        assertThat(authentication).isNotNull();
+        assertThat(authentication.getAuthorities()).extracting("authority").containsExactly("SCOPE_admin");
     }
 }

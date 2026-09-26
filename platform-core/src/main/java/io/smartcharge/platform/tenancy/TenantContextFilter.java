@@ -20,10 +20,17 @@ public final class TenantContextFilter extends OncePerRequestFilter {
     private static final String TENANT_HEADER = "X-Tenant-Id";
     private static final Set<String> TENANT_FREE_PREFIXES = Set.of(
             "/actuator/", "/internal/", "/api/v1/public/", "/api/v1/auth/miniapp/");
+    private final PlatformAuthority platformAuthority;
+
+    public TenantContextFilter(PlatformAuthority platformAuthority) {
+        this.platformAuthority = platformAuthority;
+    }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return TENANT_FREE_PREFIXES.stream().anyMatch(request.getRequestURI()::startsWith);
+        String path = request.getRequestURI();
+        return path.equals("/api/v1/session")
+                || TENANT_FREE_PREFIXES.stream().anyMatch(path::startsWith);
     }
 
     @Override
@@ -37,7 +44,8 @@ public final class TenantContextFilter extends OncePerRequestFilter {
             }
             UUID tenantId = UUID.fromString(rawTenantId);
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication instanceof JwtAuthenticationToken jwt) {
+            if (!platformAuthority.isPlatformAdministrator(authentication)
+                    && authentication instanceof JwtAuthenticationToken jwt) {
                 List<String> allowedTenants = jwt.getToken().getClaimAsStringList("tenant_ids");
                 if (allowedTenants == null || !allowedTenants.contains(tenantId.toString())) {
                     response.sendError(HttpStatus.FORBIDDEN.value(), "Token has no access to this tenant");

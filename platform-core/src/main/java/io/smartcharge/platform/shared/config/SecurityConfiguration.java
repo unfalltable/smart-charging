@@ -84,7 +84,9 @@ class SecurityConfiguration {
 
     @Bean
     Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter(
-            @Value("${charging.security.provisioning-client-id:}") String provisioningClientId) {
+            @Value("${charging.security.provisioning-client-id:}") String provisioningClientId,
+            @Value("${charging.security.identity-provider-mode:external}") String identityProviderMode,
+            @Value("${charging.security.initial-admin-username:}") String platformAdminUsername) {
         JwtGrantedAuthoritiesConverter standardScopes = new JwtGrantedAuthoritiesConverter();
         return jwt -> {
             Set<GrantedAuthority> authorities = new LinkedHashSet<>(standardScopes.convert(jwt));
@@ -99,6 +101,11 @@ class SecurityConfiguration {
             String authorizedParty = jwt.getClaimAsString("azp");
             if (!provisioningClientId.isBlank() && provisioningClientId.equals(authorizedParty)) {
                 authorities.add(new SimpleGrantedAuthority("SCOPE_internal"));
+            }
+            String username = jwt.getClaimAsString("preferred_username");
+            if ("bundled".equals(identityProviderMode) && !platformAdminUsername.isBlank()
+                    && platformAdminUsername.equals(username)) {
+                authorities.add(new SimpleGrantedAuthority("SCOPE_admin"));
             }
             return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
         };

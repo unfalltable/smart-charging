@@ -2,6 +2,7 @@ package io.smartcharge.platform.shared.config;
 
 import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
+import io.smartcharge.platform.tenancy.PlatformAuthority;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,13 +19,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public final class TenantAccessFilter extends OncePerRequestFilter {
     private final JdbcTemplate jdbc;
     private final TenantJdbcExecutor tenantJdbc;
-    private final InitialTenantAdminReconciler initialAdminReconciler;
+    private final PlatformAuthority platformAuthority;
 
     public TenantAccessFilter(JdbcTemplate jdbc, TenantJdbcExecutor tenantJdbc,
-                              InitialTenantAdminReconciler initialAdminReconciler) {
+                              PlatformAuthority platformAuthority) {
         this.jdbc = jdbc;
         this.tenantJdbc = tenantJdbc;
-        this.initialAdminReconciler = initialAdminReconciler;
+        this.platformAuthority = platformAuthority;
     }
 
     @Override
@@ -40,6 +41,17 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         String subject = authentication == null ? "" : authentication.getName();
         String path = request.getRequestURI();
+        if (platformAuthority.isPlatformAdministrator(authentication)) {
+            boolean activeTenant = Boolean.TRUE.equals(jdbc.queryForObject(
+                    "select exists(select 1 from tenant where id=? and status='ACTIVE')",
+                    Boolean.class, tenantId));
+            if (activeTenant) {
+                chain.doFilter(request, response);
+                return;
+            }
+            deny(response, "The selected tenant is not active");
+            return;
+        }
         String roleClause;
         if (path.startsWith("/api/v1/admin/access/")) {
             roleClause = "m.role_code='TENANT_ADMIN'";
@@ -63,14 +75,15 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
                 )
                 """.formatted(roleClause), Boolean.class, tenantId, subject)));
         if (!allowed) {
-            allowed = initialAdminReconciler.reconcile(tenantId, authentication);
-        }
-        if (!allowed) {
-            response.setStatus(403);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"code\":\"TENANT_ACCESS_DENIED\",\"message\":\"No active tenant role grants this operation\"}");
+            deny(response, "No active tenant role grants this operation");
             return;
         }
         chain.doFilter(request, response);
+    }
+
+    private void deny(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(403);
+        response.setContentType("application/json");
+        response.getWriter().write("{\"code\":\"TENANT_ACCESS_DENIED\",\"message\":\"" + message + "\"}");
     }
 }
