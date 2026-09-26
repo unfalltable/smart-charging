@@ -32,6 +32,11 @@ $provisionErrors = $null
 if ($provisionErrors.Count -gt 0) {
     throw "Tenant provisioning script contains PowerShell parse errors: $($provisionErrors.Message -join '; ')"
 }
+$provisioningController = Get-Content -LiteralPath (Join-Path $workspace 'platform-core/src/main/java/io/smartcharge/platform/identity/TenantProvisioningController.java') -Raw
+if ($provisioningController -notmatch 'on conflict \(tenant_id, user_id, role_code\) do update' -or
+        $provisioningController -notmatch 'TENANT_PROVISIONING_RECONCILED') {
+    throw 'Tenant provisioning must safely reconcile an existing tenant administrator membership.'
+}
 foreach ($requiredName in @(
     'OIDC_ISSUER_URI',
     'VITE_OIDC_AUTHORIZATION_ENDPOINT',

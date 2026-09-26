@@ -50,7 +50,7 @@ $tenantName = Read-Host 'Tenant display name'
 .\config-manager.cmd credentials
 ```
 
-接口在一个数据库事务内创建真实租户、平台用户和首个 `TENANT_ADMIN` 成员，并写入审计记录。然后打开管理后台，用显示的临时密码登录并立即修改密码。日常成员管理必须从管理后台执行。
+接口在一个数据库事务内创建真实租户、平台用户和首个 `TENANT_ADMIN` 成员，并写入审计记录。相同租户标识和编码可以安全地重复执行；工具会校验租户身份并补齐或恢复管理员成员关系，不会创建重复租户。然后打开管理后台，用显示的临时密码登录并立即修改密码。日常成员管理必须从管理后台执行。
 
 外部 OIDC 模式不保存外部客户端秘密；开通时仍需在当前 PowerShell 会话提供带 `SCOPE_internal` 的真实服务令牌，并传入 `-AdminSubject` 和 `-AdminDisplayName`。
 

@@ -1,20 +1,23 @@
 package io.smartcharge.platform.identity;
 
 import io.smartcharge.platform.audit.AuditService;
+import io.smartcharge.platform.shared.domain.DomainException;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -34,14 +37,10 @@ final class TenantProvisioningController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    ProvisionedTenant create(@Valid @RequestBody ProvisionTenantRequest request) {
-        return transactions.execute(status -> {
+    ResponseEntity<ProvisionedTenant> create(@Valid @RequestBody ProvisionTenantRequest request) {
+        ProvisionedTenant provisioned = Objects.requireNonNull(transactions.execute(status -> {
             UUID tenantId = request.tenantId() == null ? UUID.randomUUID() : request.tenantId();
-            jdbc.update("""
-                    insert into tenant (id, code, display_name, status)
-                    values (?, ?, ?, 'ACTIVE')
-                    """, tenantId, request.code(), request.displayName());
+            boolean created = createOrReconcileTenant(tenantId, request);
             return tenantJdbc.readWriteAs(tenantId, () -> {
                 UUID userId = jdbc.queryForObject("""
                         insert into platform_user (id, subject, display_name, status)
@@ -51,17 +50,53 @@ final class TenantProvisioningController {
                                status='ACTIVE', updated_at=now()
                         returning id
                         """, UUID.class, UUID.randomUUID(), request.adminSubject(), request.adminDisplayName());
-                UUID membershipId = UUID.randomUUID();
-                jdbc.update("""
+                UUID membershipId = jdbc.queryForObject("""
                         insert into tenant_membership (id, tenant_id, user_id, role_code, status)
                         values (?, ?, ?, 'TENANT_ADMIN', 'ACTIVE')
-                        """, membershipId, tenantId, userId);
-                audit.record("TENANT_PROVISIONED", "tenant", tenantId, null,
+                        on conflict (tenant_id, user_id, role_code) do update
+                           set status='ACTIVE'
+                        returning id
+                        """, UUID.class, UUID.randomUUID(), tenantId, userId);
+                audit.record(created ? "TENANT_PROVISIONED" : "TENANT_PROVISIONING_RECONCILED",
+                        "tenant", tenantId, null,
                         Map.of("code", request.code(), "adminSubject", request.adminSubject()));
                 return new ProvisionedTenant(tenantId, request.code(), request.displayName(),
-                        membershipId, request.adminSubject());
+                        membershipId, request.adminSubject(), created);
             });
-        });
+        }));
+        HttpStatus responseStatus = provisioned.created() ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(responseStatus).body(provisioned);
+    }
+
+    boolean createOrReconcileTenant(UUID tenantId, ProvisionTenantRequest request) {
+        List<TenantIdentity> matches = jdbc.query("""
+                select id, code
+                  from tenant
+                 where id = ? or code = ?
+                   for update
+                """, (result, row) -> new TenantIdentity(
+                result.getObject("id", UUID.class), result.getString("code")), tenantId, request.code());
+        TenantIdentity idMatch = matches.stream().filter(tenant -> tenant.id().equals(tenantId)).findFirst().orElse(null);
+        TenantIdentity codeMatch = matches.stream().filter(tenant -> tenant.code().equals(request.code())).findFirst().orElse(null);
+        if (idMatch != null && !idMatch.code().equals(request.code())) {
+            throw new DomainException("Tenant id is already assigned to a different code");
+        }
+        if (codeMatch != null && !codeMatch.id().equals(tenantId)) {
+            throw new DomainException("Tenant code is already assigned to a different tenant");
+        }
+        if (idMatch == null) {
+            jdbc.update("""
+                    insert into tenant (id, code, display_name, status)
+                    values (?, ?, ?, 'ACTIVE')
+                    """, tenantId, request.code(), request.displayName());
+            return true;
+        }
+        jdbc.update("""
+                update tenant
+                   set display_name = ?, updated_at = now(), version = version + 1
+                 where id = ?
+                """, request.displayName(), tenantId);
+        return false;
     }
 
     record ProvisionTenantRequest(
@@ -72,5 +107,7 @@ final class TenantProvisioningController {
             @NotBlank @Size(max = 120) String adminDisplayName) { }
 
     record ProvisionedTenant(UUID tenantId, String code, String displayName,
-                             UUID adminMembershipId, String adminSubject) { }
+                             UUID adminMembershipId, String adminSubject, boolean created) { }
+
+    record TenantIdentity(UUID id, String code) { }
 }

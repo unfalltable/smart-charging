@@ -10,6 +10,32 @@ $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'configuration.ps1')
 
+function Get-ProvisioningFailureDetail {
+    param([Parameter(Mandatory)][System.Management.Automation.ErrorRecord]$Failure)
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$Failure.ErrorDetails.Message)) {
+        return [string]$Failure.ErrorDetails.Message
+    }
+    $response = $Failure.Exception.Response
+    if ($null -ne $response) {
+        try {
+            if ($null -ne $response.Content) {
+                return [string]$response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            }
+            $stream = $response.GetResponseStream()
+            if ($null -ne $stream) {
+                $reader = New-Object System.IO.StreamReader($stream)
+                try { return $reader.ReadToEnd() }
+                finally { $reader.Dispose() }
+            }
+        }
+        catch {
+            return [string]$Failure.Exception.Message
+        }
+    }
+    return [string]$Failure.Exception.Message
+}
+
 $configurationPath = Get-DeploymentConfigurationPath -Workspace $workspace
 $configuration = if (Test-Path -LiteralPath $configurationPath -PathType Leaf) {
     Read-DeploymentConfiguration -Path $configurationPath
@@ -68,5 +94,11 @@ $request = @{
     TimeoutSec = 15
 }
 
-$result = Invoke-RestMethod @request
+$result = try {
+    Invoke-RestMethod @request
+}
+catch {
+    $detail = Get-ProvisioningFailureDetail -Failure $_
+    throw "Tenant provisioning failed: $detail"
+}
 $result | ConvertTo-Json -Depth 4
