@@ -50,10 +50,11 @@ class DatabaseIsolationIntegrationTest {
                     select count(*) from information_schema.tables
                      where table_schema='public' and table_name in
                        ('charging_order','payment_transaction','device_alarm','work_order',
-                        'reconciliation_batch','settlement_statement','wallet_account','invoice_request')
+                        'reconciliation_batch','settlement_statement','wallet_account','invoice_request',
+                        'operator_organization')
                     """);
             assertThat(result.next()).isTrue();
-            assertThat(result.getInt(1)).isEqualTo(8);
+            assertThat(result.getInt(1)).isEqualTo(9);
         }
     }
 

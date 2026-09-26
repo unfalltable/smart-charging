@@ -47,18 +47,22 @@ final class AssetManagementController {
     List<StationView> stations(@RequestParam(defaultValue = "100") @Min(1) @Max(500) int limit) {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> jdbc.query("""
-                select s.id, s.code, s.name, s.address, s.status, s.version,
+                select s.id, s.organization_id, o.name as organization_name,
+                       o.organization_type, s.code, s.name, s.address, s.status, s.version,
                        count(distinct d.id) as device_count,
                        count(c.id) as connector_count
                   from station s
+                  join operator_organization o on o.tenant_id=s.tenant_id and o.id=s.organization_id
                   left join device d on d.tenant_id = s.tenant_id and d.station_id = s.id and d.status <> 'RETIRED'
                   left join connector c on c.tenant_id = d.tenant_id and c.device_id = d.id
                  where s.tenant_id = ?
-                 group by s.id
+                 group by s.id, o.id
                  order by s.created_at desc
                  limit ?
                 """, (result, row) -> new StationView(
-                    result.getObject("id", UUID.class), result.getString("code"), result.getString("name"),
+                    result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                    result.getString("organization_name"), result.getString("organization_type"),
+                    result.getString("code"), result.getString("name"),
                     result.getString("address"), result.getString("status"), result.getLong("version"),
                     result.getLong("device_count"), result.getLong("connector_count")), tenantId, limit));
     }
@@ -69,14 +73,16 @@ final class AssetManagementController {
         requireState(STATION_STATES, request.status(), "station");
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
+            requireActiveOrganization(tenantId, request.organizationId());
             UUID id = UUID.randomUUID();
             jdbc.update("""
-                    insert into station (id, tenant_id, code, name, address, longitude, latitude, timezone, status)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, id, tenantId, request.code(), request.name(), request.address(), request.longitude(),
-                    request.latitude(), request.timezone(), request.status());
+                    insert into station
+                        (id, tenant_id, organization_id, code, name, address, longitude, latitude, timezone, status)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, id, tenantId, request.organizationId(), request.code(), request.name(), request.address(),
+                    request.longitude(), request.latitude(), request.timezone(), request.status());
             audit.record("STATION_CREATED", "station", id, null, request);
-            return new StationView(id, request.code(), request.name(), request.address(), request.status(), 0, 0, 0);
+            return station(tenantId, id);
         });
     }
 
@@ -86,10 +92,15 @@ final class AssetManagementController {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
             StationView before = station(tenantId, stationId);
+            UUID organizationId = request.organizationId() == null
+                    ? before.organizationId() : request.organizationId();
+            requireActiveOrganization(tenantId, organizationId);
             int changed = jdbc.update("""
-                    update station set name = ?, address = ?, status = ?, updated_at = now(), version = version + 1
+                    update station set organization_id=?, name = ?, address = ?, status = ?,
+                                       updated_at = now(), version = version + 1
                      where tenant_id = ? and id = ? and version = ?
-                    """, request.name(), request.address(), request.status(), tenantId, stationId, request.version());
+                    """, organizationId, request.name(), request.address(), request.status(), tenantId, stationId,
+                    request.version());
             if (changed != 1) throw new DomainException("Station was modified by another operator");
             StationView after = station(tenantId, stationId);
             audit.record("STATION_UPDATED", "station", stationId, before, after);
@@ -195,16 +206,29 @@ final class AssetManagementController {
 
     private StationView station(UUID tenantId, UUID id) {
         return jdbc.query("""
-                select s.id, s.code, s.name, s.address, s.status, s.version,
+                select s.id, s.organization_id, o.name as organization_name, o.organization_type,
+                       s.code, s.name, s.address, s.status, s.version,
                        (select count(*) from device d where d.tenant_id=s.tenant_id and d.station_id=s.id) device_count,
                        (select count(*) from connector c join device d on d.id=c.device_id and d.tenant_id=c.tenant_id
                          where d.tenant_id=s.tenant_id and d.station_id=s.id) connector_count
-                  from station s where s.tenant_id = ? and s.id = ?
+                  from station s
+                  join operator_organization o on o.tenant_id=s.tenant_id and o.id=s.organization_id
+                 where s.tenant_id = ? and s.id = ?
                 """, (result, row) -> new StationView(
-                    result.getObject("id", UUID.class), result.getString("code"), result.getString("name"),
+                    result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                    result.getString("organization_name"), result.getString("organization_type"),
+                    result.getString("code"), result.getString("name"),
                     result.getString("address"), result.getString("status"), result.getLong("version"),
                     result.getLong("device_count"), result.getLong("connector_count")), tenantId, id)
                 .stream().findFirst().orElseThrow(() -> new IllegalArgumentException("Station does not exist"));
+    }
+
+    private void requireActiveOrganization(UUID tenantId, UUID organizationId) {
+        boolean active = Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists(select 1 from operator_organization
+                               where tenant_id=? and id=? and status='ACTIVE')
+                """, Boolean.class, tenantId, organizationId));
+        if (!active) throw new DomainException("Station organization does not exist or is not active");
     }
 
     private static void requireState(Set<String> allowed, String state, String resource) {
@@ -216,6 +240,7 @@ final class AssetManagementController {
     }
 
     record CreateStationRequest(
+            @NotNull UUID organizationId,
             @NotBlank @Pattern(regexp = "[A-Z0-9_-]{2,64}") String code,
             @NotBlank @Size(max = 160) String name,
             @Size(max = 500) String address,
@@ -224,7 +249,8 @@ final class AssetManagementController {
             @NotBlank @Size(max = 64) String timezone,
             @NotBlank String status) { }
 
-    record UpdateStationRequest(@NotBlank @Size(max = 160) String name, @Size(max = 500) String address,
+    record UpdateStationRequest(UUID organizationId, @NotBlank @Size(max = 160) String name,
+                                @Size(max = 500) String address,
                                 @NotBlank String status, @Min(0) long version) { }
 
     record CreateDeviceRequest(
@@ -237,7 +263,8 @@ final class AssetManagementController {
             @Min(1) int ratedPowerW) { }
 
     record ChangeStatusRequest(@NotBlank String status) { }
-    record StationView(UUID id, String code, String name, String address, String status, long version,
+    record StationView(UUID id, UUID organizationId, String organizationName, String organizationType,
+                       String code, String name, String address, String status, long version,
                        long deviceCount, long connectorCount) { }
     record DeviceView(UUID id, UUID stationId, String stationName, String deviceCode, String protocolCode,
                       String productModel, String firmwareVersion, int connectorCount, String status,

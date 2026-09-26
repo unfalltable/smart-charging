@@ -4,8 +4,18 @@ import { getJson, loadSessionContext, patchJson, postJson, selectTenant,
   type DashboardSummary, type SessionContext } from './api/client'
 import { initializeAuth, login, logout } from './auth'
 
-type Page = 'dashboard' | 'assets' | 'orders' | 'tariffs' | 'finance' | 'operations' | 'legal' | 'access' | 'audit'
+type Page = 'dashboard' | 'organization' | 'assets' | 'orders' | 'tariffs' | 'finance' | 'operations' | 'legal' | 'access' | 'audit'
 type Row = Record<string, unknown>
+type OrganizationNode = {
+  id: string; parentId: string | null; code: string; name: string; organizationType: string
+  hierarchyLevel: number; contactName: string | null; contactMobile: string | null; status: string
+  version: number; stationCount: number; deviceCount: number; connectorCount: number; customerCount: number
+}
+type OrganizationTree = {
+  root: OrganizationNode
+  children: OrganizationNode[]
+  totals: { stationCount: number; deviceCount: number; connectorCount: number; customerCount: number }
+}
 
 const page = ref<Page>('dashboard')
 const loading = ref(false)
@@ -20,8 +30,9 @@ const orders = ref<Row[]>([]), tariffs = ref<Row[]>([]), payments = ref<Row[]>([
 const settlements = ref<Row[]>([]), alarms = ref<Row[]>([]), workOrders = ref<Row[]>([]), auditRows = ref<Row[]>([])
 const merchantChannels = ref<Row[]>([]), memberships = ref<Row[]>([]), settlementRules = ref<Row[]>([])
 const invoices = ref<Row[]>([]), agreements = ref<Row[]>([])
+const organizationTree = ref<OrganizationTree | null>(null)
 
-const stationForm = reactive({ code: '', name: '', address: '', timezone: 'Asia/Shanghai', status: 'DRAFT' })
+const stationForm = reactive({ organizationId: '', code: '', name: '', address: '', timezone: 'Asia/Shanghai', status: 'DRAFT' })
 const deviceForm = reactive({ stationId: '', deviceCode: '', protocolCode: '', productModel: '', connectorCount: null as number | null, ratedPowerW: null as number | null })
 const tariffForm = reactive({ name: '', billingMode: 'DURATION', durationUnitPriceMinor: null as number | null, energyUnitPriceMinor: null as number | null, minimumAmountMinor: null as number | null })
 const workOrderForm = reactive({ title: '', description: '', priority: 'NORMAL', assigneeSubject: '' })
@@ -29,21 +40,35 @@ const refundForm = reactive({ paymentId: '', amountMinor: 0, reason: '' })
 const settlementForm = reactive({ ruleId: '', periodStart: '', periodEnd: '' })
 const merchantForm = reactive({ channel: 'WECHAT', merchantId: '', applicationId: '', secretReference: '', notifyUrl: '', refundNotifyUrl: '', status: 'ACTIVE' })
 const membershipForm = reactive({ subject: '', displayName: '', roleCode: 'OPERATOR' })
-const settlementRuleForm = reactive({ name: '', beneficiaryCode: '', shareBasisPoints: 0, effectiveFrom: '', effectiveUntil: null as string | null })
+const settlementRuleForm = reactive({ organizationId: '', name: '', beneficiaryCode: '', shareBasisPoints: 10000, platformServiceFeeBasisPoints: 0, fixedServiceFeeMinor: 0, effectiveFrom: '', effectiveUntil: null as string | null })
 const agreementForm = reactive({ documentCode: 'SERVICE_TERMS', version: '', title: '', contentUrl: '', contentHash: '', effectiveAt: '' })
+const organizationForm = reactive({ parentId: '', code: '', name: '', organizationType: 'SITE_PARTNER', contactName: '', contactMobile: '' })
+const rootOrganizationForm = reactive({ name: '', organizationType: 'REGIONAL_OPERATOR', contactName: '', contactMobile: '', status: 'ACTIVE', version: 0 })
 
 const onlineRate = computed(() => summary.value.totalDevices === 0 ? 0 : Math.round(summary.value.onlineDevices * 100 / summary.value.totalDevices))
 const revenue = computed(() => money(summary.value.todayRevenueMinor))
 const currentTenant = computed(() => sessionContext.value?.tenants.find((tenant) => tenant.id === currentTenantId.value))
+const organizations = computed(() => organizationTree.value ? [organizationTree.value.root, ...organizationTree.value.children] : [])
+const canManageOrganizations = computed(() => Boolean(sessionContext.value?.platformAdministrator || currentTenant.value?.roles.includes('TENANT_ADMIN')))
 const titles: Record<Page, [string, string]> = {
-  dashboard: ['OPERATIONS', '运营总览'], assets: ['ASSETS', '场站设备'], orders: ['ORDERS', '充电订单'],
+  dashboard: ['OPERATIONS', '运营总览'], organization: ['CHANNEL', '渠道组织'], assets: ['ASSETS', '场站设备'], orders: ['ORDERS', '充电订单'],
   tariffs: ['PRICING', '计费策略'], finance: ['FINANCE', '支付与结算'], operations: ['SERVICE', '告警工单'],
   legal: ['LEGAL', '协议与合规'], access: ['ACCESS', '账号与权限'], audit: ['SECURITY', '审计日志']
 }
+const visiblePages = computed(() => (Object.keys(titles) as Page[]).filter(item => item !== 'organization' || canManageOrganizations.value))
 
 function money(value: unknown) { return `¥ ${(Number(value ?? 0) / 100).toFixed(2)}` }
 function date(value: unknown) { return value ? new Date(String(value)).toLocaleString('zh-CN') : '—' }
 function short(value: unknown) { const text = String(value ?? '—'); return text.length > 24 ? `${text.slice(0, 21)}…` : text }
+function organizationType(value: unknown) { return ({ REGIONAL_OPERATOR: '区域运营商', FIRST_TIER_CONTRACTOR: '一级分包商', DIRECT_BRANCH: '直营网点', SECOND_TIER_PARTNER: '二级合作商', SITE_PARTNER: '场地方' } as Record<string, string>)[String(value)] ?? String(value) }
+
+function applyOrganizationTree(tree: OrganizationTree) {
+  organizationTree.value = tree
+  organizationForm.parentId = tree.root.id
+  if (!stationForm.organizationId || !organizations.value.some(row => row.id === stationForm.organizationId && row.status === 'ACTIVE')) stationForm.organizationId = tree.root.id
+  if (!settlementRuleForm.organizationId || !organizations.value.some(row => row.id === settlementRuleForm.organizationId && row.status === 'ACTIVE')) settlementRuleForm.organizationId = tree.root.id
+  Object.assign(rootOrganizationForm, { name: tree.root.name, organizationType: tree.root.organizationType, contactName: tree.root.contactName ?? '', contactMobile: tree.root.contactMobile ?? '', status: tree.root.status, version: tree.root.version })
+}
 
 async function run(action: () => Promise<void>, success = '操作成功') {
   loadError.value = ''; notice.value = ''; loading.value = true
@@ -54,12 +79,22 @@ async function run(action: () => Promise<void>, success = '操作成功') {
 
 async function fetchPage(target: Page) {
   if (target === 'dashboard') summary.value = await getJson<DashboardSummary>('/operations/dashboard')
-  if (target === 'assets') [stations.value, devices.value, connectors.value] = await Promise.all([
-    getJson<Row[]>('/admin/assets/stations'), getJson<Row[]>('/admin/assets/devices'), getJson<Row[]>('/admin/assets/connectors')])
+  if (target === 'organization') applyOrganizationTree(await getJson<OrganizationTree>('/admin/organizations/tree'))
+  if (target === 'assets') {
+    const [tree, stationRows, deviceRows, connectorRows] = await Promise.all([getJson<OrganizationTree>('/admin/organizations/tree'),
+      getJson<Row[]>('/admin/assets/stations'), getJson<Row[]>('/admin/assets/devices'), getJson<Row[]>('/admin/assets/connectors')])
+    applyOrganizationTree(tree); stations.value = stationRows; devices.value = deviceRows; connectors.value = connectorRows
+  }
   if (target === 'orders') orders.value = await getJson<Row[]>('/admin/operations/orders')
   if (target === 'tariffs') tariffs.value = await getJson<Row[]>('/admin/tariffs')
-  if (target === 'finance') [payments.value, refunds.value, settlements.value, merchantChannels.value, settlementRules.value, invoices.value] = await Promise.all([
-    getJson<Row[]>('/admin/finance/payments'), getJson<Row[]>('/admin/finance/refunds'), getJson<Row[]>('/admin/finance/settlements'), getJson<Row[]>('/admin/finance/merchant-channels'), getJson<Row[]>('/admin/finance/settlement-rules'), getJson<Row[]>('/admin/finance/invoices')])
+  if (target === 'finance') {
+    const [tree, paymentRows, refundRows, settlementRows, channelRows, ruleRows, invoiceRows] = await Promise.all([
+      getJson<OrganizationTree>('/admin/organizations/tree'), getJson<Row[]>('/admin/finance/payments'), getJson<Row[]>('/admin/finance/refunds'),
+      getJson<Row[]>('/admin/finance/settlements'), getJson<Row[]>('/admin/finance/merchant-channels'),
+      getJson<Row[]>('/admin/finance/settlement-rules'), getJson<Row[]>('/admin/finance/invoices')])
+    applyOrganizationTree(tree); payments.value = paymentRows; refunds.value = refundRows; settlements.value = settlementRows
+    merchantChannels.value = channelRows; settlementRules.value = ruleRows; invoices.value = invoiceRows
+  }
   if (target === 'operations') [alarms.value, workOrders.value] = await Promise.all([
     getJson<Row[]>('/admin/operations/alarms'), getJson<Row[]>('/admin/operations/work-orders')])
   if (target === 'legal') agreements.value = await getJson<Row[]>('/admin/legal/agreements')
@@ -75,7 +110,7 @@ async function refresh(target: Page, action: () => Promise<unknown>, message: st
   await run(async () => { await action(); await fetchPage(target) }, message)
 }
 
-async function createStation() { await refresh('assets', () => postJson('/admin/assets/stations', stationForm), '场站已创建'); Object.assign(stationForm, { code: '', name: '', address: '', timezone: 'Asia/Shanghai', status: 'DRAFT' }) }
+async function createStation() { await refresh('assets', () => postJson('/admin/assets/stations', stationForm), '场站已创建'); Object.assign(stationForm, { organizationId: organizationTree.value?.root.id ?? '', code: '', name: '', address: '', timezone: 'Asia/Shanghai', status: 'DRAFT' }) }
 async function createDevice() { await refresh('assets', () => postJson('/admin/assets/devices', { ...deviceForm, firmwareVersion: null }), '设备及端口已创建'); Object.assign(deviceForm, { stationId: '', deviceCode: '', protocolCode: '', productModel: '', connectorCount: null, ratedPowerW: null }) }
 async function rotateCredential(row: Row) { if (!confirm(`轮换设备 ${row.deviceCode} 的接入密钥？旧密钥将在网关缓存过期后失效。`)) return; await run(async () => { const issued = await postJson<Row>(`/admin/assets/devices/${row.id}/credential/rotate`, {}); await navigator.clipboard.writeText(String(issued.secret)); notice.value = `新密钥已复制到剪贴板，请立即安全写入设备（指纹 ${issued.fingerprint}）` }, '') }
 async function createTariff() { await refresh('tariffs', () => postJson('/admin/tariffs', { ...tariffForm, effectiveFrom: new Date().toISOString(), effectiveUntil: null }), '费率草稿已创建'); tariffForm.name = '' }
@@ -88,6 +123,9 @@ async function transitionWorkOrder(row: Row, status: string) { await refresh('op
 async function createRefund() { await refresh('finance', () => postJson('/admin/finance/refunds', refundForm), '退款已提交'); Object.assign(refundForm, { paymentId: '', amountMinor: 0, reason: '' }) }
 async function generateSettlement() { await refresh('finance', () => postJson('/admin/finance/settlements', settlementForm), '结算单已生成') }
 async function createSettlementRule() { await refresh('finance', () => postJson('/admin/finance/settlement-rules', settlementRuleForm), '结算规则已创建'); settlementRuleForm.name = ''; settlementRuleForm.beneficiaryCode = '' }
+async function createOrganization() { await refresh('organization', () => postJson('/admin/organizations', organizationForm), '合作组织已创建'); Object.assign(organizationForm, { parentId: organizationTree.value?.root.id ?? '', code: '', name: '', organizationType: 'SITE_PARTNER', contactName: '', contactMobile: '' }) }
+async function saveRootOrganization() { const root = organizationTree.value?.root; if (root) await refresh('organization', () => patchJson(`/admin/organizations/${root.id}`, rootOrganizationForm), '一级组织已更新') }
+async function changeOrganizationStatus(row: OrganizationNode, status: string) { await refresh('organization', () => patchJson(`/admin/organizations/${row.id}`, { name: row.name, organizationType: row.organizationType, contactName: row.contactName ?? '', contactMobile: row.contactMobile ?? '', status, version: row.version }), '组织状态已更新') }
 async function transitionSettlement(row: Row, status: string) { await refresh('finance', () => postJson(`/admin/finance/settlements/${row.id}/transition`, { status }), '结算状态已更新') }
 async function createMerchantChannel() { await refresh('finance', () => postJson('/admin/finance/merchant-channels', merchantForm), '商户通道已创建') }
 async function issueInvoice(row: Row) { const invoiceUrl = prompt('请输入电子发票 HTTPS 地址'); if (invoiceUrl) await refresh('finance', () => postJson(`/admin/finance/invoices/${row.id}/issue`, { invoiceUrl }), '发票已开具') }
@@ -122,7 +160,7 @@ onMounted(async () => {
   <div v-else class="shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">⚡</span><span>充电运营平台</span></div>
-      <nav><button v-for="item in (Object.keys(titles) as Page[])" :key="item" class="nav-item" :class="{ active: page === item }" @click="load(item)">{{ titles[item][1] }}</button></nav>
+      <nav><button v-for="item in visiblePages" :key="item" class="nav-item" :class="{ active: page === item }" @click="load(item)">{{ titles[item][1] }}</button></nav>
       <div class="environment">
         <label for="tenant-switcher">当前租户</label>
         <select id="tenant-switcher" v-model="currentTenantId" :aria-label="`当前租户：${currentTenant?.displayName ?? ''}`" @change="switchTenant">
@@ -142,9 +180,30 @@ onMounted(async () => {
           <section class="metrics"><article><span>设备在线</span><strong>{{ summary.onlineDevices }}<small>/ {{ summary.totalDevices }}</small></strong><em>{{ onlineRate }}%</em></article><article><span>可用充电位</span><strong>{{ summary.availableConnectors }}</strong><em>当前可启动</em></article><article><span>进行中订单</span><strong>{{ summary.activeOrders }}</strong><em>实时设备事件驱动</em></article><article class="revenue"><span>今日实收</span><strong>{{ revenue }}</strong><em>以支付对账为准</em></article></section>
           <section class="grid"><article class="panel wide"><div class="panel-title"><div><p>PLATFORM</p><h2>生产状态</h2></div></div><div class="status-board"><b>双层租户隔离</b><span>JWT 租户授权 + PostgreSQL RLS</span><b>可靠设备链路</b><span>mTLS、HMAC、nonce、JetStream</span><b>交易一致性</b><span>幂等、行锁、outbox、双式账务</span></div></article><article class="panel"><div class="panel-title"><div><p>CHECKLIST</p><h2>上线门禁</h2></div></div><ul class="tasks"><li><span>支付对账</span><b>强制</b></li><li><span>备份恢复</span><b>强制</b></li><li><span>压力测试</span><b>强制</b></li></ul></article></section>
         </template>
+        <template v-else-if="page === 'organization' && organizationTree">
+          <section class="hierarchy-summary" aria-label="渠道组织总览">
+            <article><span>合作组织</span><strong>{{ organizationTree.children.length }}</strong></article>
+            <article><span>场站</span><strong>{{ organizationTree.totals.stationCount }}</strong></article>
+            <article><span>充电桩 / 端口</span><strong>{{ organizationTree.totals.deviceCount }} / {{ organizationTree.totals.connectorCount }}</strong></article>
+            <article><span>终端充电用户</span><strong>{{ organizationTree.totals.customerCount }}</strong></article>
+          </section>
+          <section class="organization-flow">
+            <article class="organization-card platform-card"><p>PLATFORM</p><h2>平台运营方</h2><span>平台总管理员 · 跨租户运营与服务费结算</span></article>
+            <div class="flow-connector" aria-hidden="true"></div>
+            <article class="organization-card root-card"><div><span class="level-badge">一级</span><span class="state">{{ organizationTree.root.status }}</span></div><h2>{{ organizationTree.root.name }}</h2><p>{{ organizationType(organizationTree.root.organizationType) }} · {{ organizationTree.root.code }}</p><div class="organization-stats"><span>自营场站 <b>{{ organizationTree.root.stationCount }}</b></span><span>设备 <b>{{ organizationTree.root.deviceCount }}</b></span><span>端口 <b>{{ organizationTree.root.connectorCount }}</b></span><span>用户 <b>{{ organizationTree.root.customerCount }}</b></span></div></article>
+            <div class="flow-connector" aria-hidden="true"></div>
+            <div v-if="organizationTree.children.length" class="child-organizations">
+              <article v-for="row in organizationTree.children" :key="row.id" class="organization-card child-card">
+                <div><span class="level-badge">二级</span><span class="state">{{ row.status }}</span></div><h3>{{ row.name }}</h3><p>{{ organizationType(row.organizationType) }} · {{ row.code }}</p><small>{{ row.contactName || '未设置联系人' }}<template v-if="row.contactMobile"> · {{ row.contactMobile }}</template></small><div class="organization-stats"><span>场站 <b>{{ row.stationCount }}</b></span><span>设备 <b>{{ row.deviceCount }}</b></span><span>端口 <b>{{ row.connectorCount }}</b></span><span>用户 <b>{{ row.customerCount }}</b></span></div><div class="card-actions"><button v-if="row.status === 'ACTIVE'" class="danger-button" @click="changeOrganizationStatus(row, 'SUSPENDED')">暂停</button><button v-else-if="row.status === 'SUSPENDED'" @click="changeOrganizationStatus(row, 'ACTIVE')">恢复</button><button v-if="row.status !== 'CLOSED'" class="secondary-button" @click="changeOrganizationStatus(row, 'CLOSED')">关闭</button></div>
+              </article>
+            </div>
+            <div v-else class="empty-organization">尚未建立下游合作组织；根组织下的场站视为自营场站。</div>
+          </section>
+          <section class="forms organization-forms"><form class="panel form" @submit.prevent="saveRootOrganization"><h2>一级组织资料</h2><input v-model="rootOrganizationForm.name" placeholder="组织名称" required><select v-model="rootOrganizationForm.organizationType"><option value="REGIONAL_OPERATOR">区域运营商</option><option value="FIRST_TIER_CONTRACTOR">一级分包商</option><option value="DIRECT_BRANCH">直营网点</option></select><input v-model="rootOrganizationForm.contactName" placeholder="联系人"><input v-model="rootOrganizationForm.contactMobile" placeholder="联系电话"><button>保存一级组织</button></form><form class="panel form" @submit.prevent="createOrganization"><h2>新增二级合作组织</h2><input v-model="organizationForm.code" placeholder="组织编码（大写字母/数字）" required><input v-model="organizationForm.name" placeholder="组织名称" required><select v-model="organizationForm.organizationType"><option value="SECOND_TIER_PARTNER">二级合作商</option><option value="SITE_PARTNER">场地方</option></select><input v-model="organizationForm.contactName" placeholder="联系人"><input v-model="organizationForm.contactMobile" placeholder="联系电话"><button>创建合作组织</button></form></section>
+        </template>
         <template v-else-if="page === 'assets'">
-          <section class="forms"><form class="panel form" @submit.prevent="createStation"><h2>新增场站</h2><input v-model="stationForm.code" placeholder="场站编码" required><input v-model="stationForm.name" placeholder="场站名称" required><input v-model="stationForm.address" placeholder="地址"><select v-model="stationForm.status"><option>DRAFT</option><option>ACTIVE</option></select><button>创建场站</button></form><form class="panel form" @submit.prevent="createDevice"><h2>新增设备</h2><select v-model="deviceForm.stationId" required><option value="" disabled>选择场站</option><option v-for="row in stations" :key="String(row.id)" :value="row.id">{{ row.name }}</option></select><input v-model="deviceForm.deviceCode" placeholder="设备编码" required><input v-model="deviceForm.protocolCode" placeholder="协议编码" required><input v-model="deviceForm.productModel" placeholder="产品型号" required><input v-model.number="deviceForm.connectorCount" type="number" min="1" max="128" placeholder="实际端口数量" required><input v-model.number="deviceForm.ratedPowerW" type="number" min="1" placeholder="单端口额定功率（W）" required><button>创建设备</button></form></section>
-          <section class="panel table-panel"><h2>场站</h2><table><thead><tr><th>编码</th><th>名称</th><th>状态</th><th>设备</th><th>端口</th></tr></thead><tbody><tr v-for="row in stations" :key="String(row.id)"><td>{{ row.code }}</td><td>{{ row.name }}</td><td><span class="state">{{ row.status }}</span></td><td>{{ row.deviceCount }}</td><td>{{ row.connectorCount }}</td></tr></tbody></table></section>
+          <section class="forms"><form class="panel form" @submit.prevent="createStation"><h2>新增场站</h2><select v-model="stationForm.organizationId" required><option value="" disabled>选择归属组织</option><option v-for="row in organizations.filter(item => item.status === 'ACTIVE')" :key="row.id" :value="row.id">{{ row.name }}（{{ organizationType(row.organizationType) }}）</option></select><input v-model="stationForm.code" placeholder="场站编码" required><input v-model="stationForm.name" placeholder="场站名称" required><input v-model="stationForm.address" placeholder="地址"><select v-model="stationForm.status"><option>DRAFT</option><option>ACTIVE</option></select><button>创建场站</button></form><form class="panel form" @submit.prevent="createDevice"><h2>新增设备</h2><select v-model="deviceForm.stationId" required><option value="" disabled>选择场站</option><option v-for="row in stations" :key="String(row.id)" :value="row.id">{{ row.name }}</option></select><input v-model="deviceForm.deviceCode" placeholder="设备编码" required><input v-model="deviceForm.protocolCode" placeholder="协议编码" required><input v-model="deviceForm.productModel" placeholder="产品型号" required><input v-model.number="deviceForm.connectorCount" type="number" min="1" max="128" placeholder="实际端口数量" required><input v-model.number="deviceForm.ratedPowerW" type="number" min="1" placeholder="单端口额定功率（W）" required><button>创建设备</button></form></section>
+          <section class="panel table-panel"><h2>场站</h2><table><thead><tr><th>编码</th><th>名称</th><th>归属组织</th><th>状态</th><th>设备</th><th>端口</th></tr></thead><tbody><tr v-for="row in stations" :key="String(row.id)"><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.organizationName }}<small>{{ organizationType(row.organizationType) }}</small></td><td><span class="state">{{ row.status }}</span></td><td>{{ row.deviceCount }}</td><td>{{ row.connectorCount }}</td></tr></tbody></table></section>
           <section class="panel table-panel"><h2>设备</h2><table><thead><tr><th>设备编码</th><th>场站</th><th>型号</th><th>协议</th><th>端口</th><th>状态</th><th>最后在线</th><th>凭据</th></tr></thead><tbody><tr v-for="row in devices" :key="String(row.id)"><td>{{ row.deviceCode }}</td><td>{{ row.stationName }}</td><td>{{ row.productModel }}</td><td>{{ row.protocolCode }}</td><td>{{ row.connectorCount }}</td><td><span class="state">{{ row.status }}</span></td><td>{{ date(row.lastSeenAt) }}</td><td><button @click="rotateCredential(row)">轮换密钥</button></td></tr></tbody></table></section>
           <section class="panel table-panel"><h2>充电端口</h2><table><thead><tr><th>设备</th><th>端口</th><th>外部编码</th><th>额定功率</th><th>状态</th><th>费率 ID</th></tr></thead><tbody><tr v-for="row in connectors" :key="String(row.id)"><td>{{ row.deviceCode }}</td><td>{{ row.connectorNo }}</td><td>{{ row.externalCode }}</td><td>{{ row.ratedPowerW }} W</td><td><span class="state">{{ row.status }}</span></td><td class="mono">{{ short(row.tariffId) }}</td></tr></tbody></table></section>
         </template>
@@ -157,11 +216,11 @@ onMounted(async () => {
         </template>
         <template v-else-if="page === 'finance'">
           <section class="forms"><form class="panel form" @submit.prevent="createRefund"><h2>发起退款</h2><input v-model="refundForm.paymentId" placeholder="支付 ID" required><input v-model.number="refundForm.amountMinor" type="number" min="1" placeholder="退款金额（分）" required><input v-model="refundForm.reason" placeholder="原因" required><button>提交退款</button></form><form class="panel form" @submit.prevent="generateSettlement"><h2>生成结算单</h2><input v-model="settlementForm.ruleId" placeholder="结算规则 ID" required><input v-model="settlementForm.periodStart" type="date" required><input v-model="settlementForm.periodEnd" type="date" required><button>生成结算</button></form><form class="panel form" @submit.prevent="createMerchantChannel"><h2>微信支付通道</h2><input v-model="merchantForm.merchantId" placeholder="商户号" required><input v-model="merchantForm.applicationId" placeholder="小程序 AppID" required><input v-model="merchantForm.secretReference" placeholder="env:密钥前缀" required><input v-model="merchantForm.notifyUrl" type="url" placeholder="支付 HTTPS 回调地址" required><input v-model="merchantForm.refundNotifyUrl" type="url" placeholder="退款 HTTPS 回调地址" required><button>创建通道</button></form></section>
-          <form class="panel form horizontal" @submit.prevent="createSettlementRule"><h2>新增结算规则</h2><input v-model="settlementRuleForm.name" placeholder="规则名称" required><input v-model="settlementRuleForm.beneficiaryCode" placeholder="受益方编码" required><input v-model.number="settlementRuleForm.shareBasisPoints" type="number" min="0" max="10000" placeholder="分成基点" required><input v-model="settlementRuleForm.effectiveFrom" type="date" required><button>创建规则</button></form>
+          <form class="panel form horizontal" @submit.prevent="createSettlementRule"><h2>新增组织结算规则</h2><select v-model="settlementRuleForm.organizationId" required><option value="" disabled>选择结算组织</option><option v-for="row in organizations.filter(item => item.status === 'ACTIVE')" :key="row.id" :value="row.id">{{ row.name }}</option></select><input v-model="settlementRuleForm.name" placeholder="规则名称" required><input v-model="settlementRuleForm.beneficiaryCode" placeholder="受益方编码" required><input v-model.number="settlementRuleForm.shareBasisPoints" type="number" min="0" max="10000" title="扣除平台服务费后的受益方分成比例" placeholder="受益方分成基点" required><input v-model.number="settlementRuleForm.platformServiceFeeBasisPoints" type="number" min="0" max="10000" title="100 基点等于 1%" placeholder="平台服务费基点" required><input v-model.number="settlementRuleForm.fixedServiceFeeMinor" type="number" min="0" title="每个结算周期固定收取" placeholder="固定服务费（分）" required><input v-model="settlementRuleForm.effectiveFrom" type="date" required><button>创建规则</button></form>
           <section class="panel table-panel"><h2>商户通道</h2><table><thead><tr><th>渠道</th><th>商户号</th><th>应用</th><th>密钥引用</th><th>状态</th></tr></thead><tbody><tr v-for="row in merchantChannels" :key="String(row.id)"><td>{{ row.channel }}</td><td>{{ row.merchantId }}</td><td>{{ row.applicationId }}</td><td class="mono">{{ row.secretReference }}</td><td><span class="state">{{ row.status }}</span></td></tr></tbody></table></section>
           <section class="panel table-panel"><h2>支付流水</h2><table><thead><tr><th>商户订单</th><th>业务订单</th><th>渠道</th><th>金额</th><th>状态</th><th>完成时间</th></tr></thead><tbody><tr v-for="row in payments" :key="String(row.id)"><td>{{ row.merchantOrderNo }}</td><td>{{ row.orderNo }}</td><td>{{ row.channel }}</td><td>{{ money(row.amountMinor) }}</td><td><span class="state">{{ row.status }}</span></td><td>{{ date(row.completedAt) }}</td></tr></tbody></table></section>
-          <section class="panel table-panel"><h2>退款与结算</h2><table><thead><tr><th>类型</th><th>编号</th><th>金额</th><th>状态/操作</th></tr></thead><tbody><tr v-for="row in refunds" :key="String(row.id)"><td>退款</td><td>{{ row.merchantRefundNo }}</td><td>{{ money(row.amountMinor) }}</td><td>{{ row.status }}</td></tr><tr v-for="row in settlements" :key="String(row.id)"><td>结算</td><td>{{ row.periodStart }} ~ {{ row.periodEnd }}</td><td>{{ money(row.settlementAmountMinor) }}</td><td><span>{{ row.status }}</span><button v-if="row.status === 'DRAFT'" @click="transitionSettlement(row, 'CONFIRMED')">确认</button><button v-if="row.status === 'CONFIRMED'" @click="transitionSettlement(row, 'PAYING')">付款中</button><button v-if="row.status === 'PAYING'" @click="transitionSettlement(row, 'PAID')">标记已付</button></td></tr></tbody></table></section>
-          <section class="panel table-panel"><h2>结算规则</h2><table><thead><tr><th>名称</th><th>受益方</th><th>比例</th><th>生效期</th><th>状态</th></tr></thead><tbody><tr v-for="row in settlementRules" :key="String(row.id)"><td>{{ row.name }}</td><td>{{ row.beneficiaryCode }}</td><td>{{ Number(row.shareBasisPoints) / 100 }}%</td><td>{{ row.effectiveFrom }} ~ {{ row.effectiveUntil || '长期' }}</td><td>{{ row.status }}</td></tr></tbody></table></section>
+          <section class="panel table-panel"><h2>退款与结算</h2><table><thead><tr><th>类型</th><th>编号</th><th>交易净额</th><th>平台服务费</th><th>应结金额</th><th>状态/操作</th></tr></thead><tbody><tr v-for="row in refunds" :key="String(row.id)"><td>退款</td><td>{{ row.merchantRefundNo }}</td><td>—</td><td>—</td><td>{{ money(row.amountMinor) }}</td><td>{{ row.status }}</td></tr><tr v-for="row in settlements" :key="String(row.id)"><td>结算</td><td>{{ row.periodStart }} ~ {{ row.periodEnd }}</td><td>{{ money(row.grossAmountMinor) }}</td><td>{{ money(row.platformServiceFeeMinor) }}</td><td>{{ money(row.settlementAmountMinor) }}</td><td><span>{{ row.status }}</span><button v-if="row.status === 'DRAFT'" @click="transitionSettlement(row, 'CONFIRMED')">确认</button><button v-if="row.status === 'CONFIRMED'" @click="transitionSettlement(row, 'PAYING')">付款中</button><button v-if="row.status === 'PAYING'" @click="transitionSettlement(row, 'PAID')">标记已付</button></td></tr></tbody></table></section>
+          <section class="panel table-panel"><h2>结算规则</h2><table><thead><tr><th>组织</th><th>名称</th><th>受益方</th><th>净额分成</th><th>平台服务费</th><th>生效期</th><th>状态</th></tr></thead><tbody><tr v-for="row in settlementRules" :key="String(row.id)"><td>{{ row.organizationName }}</td><td>{{ row.name }}</td><td>{{ row.beneficiaryCode }}</td><td>{{ Number(row.shareBasisPoints) / 100 }}%</td><td>{{ Number(row.platformServiceFeeBasisPoints) / 100 }}% + {{ money(row.fixedServiceFeeMinor) }}/期</td><td>{{ row.effectiveFrom }} ~ {{ row.effectiveUntil || '长期' }}</td><td>{{ row.status }}</td></tr></tbody></table></section>
           <section class="panel table-panel"><h2>发票申请</h2><table><thead><tr><th>抬头</th><th>订单</th><th>邮箱</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="row in invoices" :key="String(row.id)"><td>{{ row.title }}</td><td class="mono">{{ short(row.orderId) }}</td><td>{{ row.email }}</td><td>{{ money(row.amountMinor) }}</td><td>{{ row.status }}</td><td><button v-if="['SUBMITTED','PROCESSING'].includes(String(row.status))" @click="issueInvoice(row)">开票</button><button v-if="['SUBMITTED','PROCESSING'].includes(String(row.status))" @click="rejectInvoice(row)">驳回</button><button v-if="row.status === 'ISSUED'" @click="redIssueInvoice(row)">红冲</button></td></tr></tbody></table></section>
         </template>
         <template v-else-if="page === 'operations'">

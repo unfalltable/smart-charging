@@ -43,6 +43,13 @@ final class TenantProvisioningController {
             TenantResolution resolution = createOrReconcileTenant(requestedTenantId, request);
             UUID tenantId = resolution.tenantId();
             return tenantJdbc.readWriteAs(tenantId, () -> {
+                jdbc.update("""
+                        insert into operator_organization
+                            (id, tenant_id, parent_id, code, name, organization_type, hierarchy_level, status)
+                        values (?, ?, null, ?, ?, 'REGIONAL_OPERATOR', 1, 'ACTIVE')
+                        on conflict (tenant_id) where hierarchy_level=1 do update
+                           set name=excluded.name, updated_at=now(), version=operator_organization.version+1
+                        """, tenantId, tenantId, request.code(), request.displayName());
                 UUID userId = jdbc.queryForObject("""
                         insert into platform_user (id, subject, display_name, status)
                         values (?, ?, ?, 'ACTIVE')

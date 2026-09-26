@@ -303,16 +303,22 @@ final class FinanceAdminController {
     SettlementRuleView createSettlementRule(@Valid @RequestBody CreateSettlementRuleRequest request) {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
+            boolean activeOrganization = Boolean.TRUE.equals(jdbc.queryForObject("""
+                    select exists(select 1 from operator_organization
+                                   where tenant_id=? and id=? and status='ACTIVE')
+                    """, Boolean.class, tenantId, request.organizationId()));
+            if (!activeOrganization) throw new DomainException("Settlement organization does not exist or is not active");
             UUID id = UUID.randomUUID();
             jdbc.update("""
                     insert into settlement_rule
-                        (id, tenant_id, name, beneficiary_code, share_basis_points,
+                        (id, tenant_id, organization_id, name, beneficiary_code, share_basis_points,
+                         platform_service_fee_basis_points, fixed_service_fee_minor,
                          effective_from, effective_until, status)
-                    values (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
-                    """, id, tenantId, request.name(), request.beneficiaryCode(), request.shareBasisPoints(),
-                    request.effectiveFrom(), request.effectiveUntil());
-            SettlementRuleView view = new SettlementRuleView(id, request.name(), request.beneficiaryCode(),
-                    request.shareBasisPoints(), request.effectiveFrom(), request.effectiveUntil(), "ACTIVE");
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+                    """, id, tenantId, request.organizationId(), request.name(), request.beneficiaryCode(),
+                    request.shareBasisPoints(), request.platformServiceFeeBasisPoints(),
+                    request.fixedServiceFeeMinor(), request.effectiveFrom(), request.effectiveUntil());
+            SettlementRuleView view = settlementRule(tenantId, id);
             audit.record("SETTLEMENT_RULE_CREATED", "settlement_rule", id, null, view);
             return view;
         });
@@ -322,11 +328,18 @@ final class FinanceAdminController {
     List<SettlementRuleView> settlementRules() {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> jdbc.query("""
-                select id, name, beneficiary_code, share_basis_points, effective_from, effective_until, status
-                  from settlement_rule where tenant_id=? order by created_at desc
+                select r.id, r.organization_id, o.name organization_name, r.name, r.beneficiary_code,
+                       r.share_basis_points, r.platform_service_fee_basis_points, r.fixed_service_fee_minor,
+                       r.effective_from, r.effective_until, r.status
+                  from settlement_rule r
+                  join operator_organization o on o.tenant_id=r.tenant_id and o.id=r.organization_id
+                 where r.tenant_id=? order by r.created_at desc
                 """, (result, row) -> new SettlementRuleView(
-                    result.getObject("id", UUID.class), result.getString("name"),
+                    result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                    result.getString("organization_name"), result.getString("name"),
                     result.getString("beneficiary_code"), result.getInt("share_basis_points"),
+                    result.getInt("platform_service_fee_basis_points"),
+                    result.getLong("fixed_service_fee_minor"),
                     result.getObject("effective_from", LocalDate.class),
                     result.getObject("effective_until", LocalDate.class), result.getString("status")), tenantId));
     }
@@ -338,34 +351,58 @@ final class FinanceAdminController {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
             Rule rule = jdbc.query("""
-                    select share_basis_points from settlement_rule
-                     where tenant_id=? and id=? and status='ACTIVE'
+                    select r.organization_id, r.share_basis_points, r.platform_service_fee_basis_points,
+                           r.fixed_service_fee_minor, o.hierarchy_level
+                      from settlement_rule r
+                      join operator_organization o on o.tenant_id=r.tenant_id and o.id=r.organization_id
+                     where r.tenant_id=? and r.id=? and r.status='ACTIVE' and o.status='ACTIVE'
                        and effective_from<=? and (effective_until is null or effective_until>=?)
-                    """, (result, row) -> new Rule(result.getInt(1)), tenantId, request.ruleId(),
+                    """, (result, row) -> new Rule(
+                    result.getObject("organization_id", UUID.class), result.getInt("share_basis_points"),
+                    result.getInt("platform_service_fee_basis_points"),
+                    result.getLong("fixed_service_fee_minor"), result.getInt("hierarchy_level")),
+                    tenantId, request.ruleId(),
                     request.periodEnd(), request.periodStart()).stream().findFirst()
                     .orElseThrow(() -> new DomainException("Settlement rule is not active for the period"));
             Instant start = request.periodStart().atStartOfDay(ZoneOffset.UTC).toInstant();
             Instant endExclusive = request.periodEnd().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
             Long payments = jdbc.queryForObject("""
-                    select coalesce(sum(amount_minor),0) from payment_transaction
-                     where tenant_id=? and status='SUCCEEDED' and completed_at>=? and completed_at<?
-                    """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive));
+                    select coalesce(sum(p.amount_minor),0)
+                      from payment_transaction p
+                      join charging_order co on co.tenant_id=p.tenant_id and co.id=p.order_id
+                      join connector c on c.tenant_id=co.tenant_id and c.id=co.connector_id
+                      join device d on d.tenant_id=c.tenant_id and d.id=c.device_id
+                      join station s on s.tenant_id=d.tenant_id and s.id=d.station_id
+                     where p.tenant_id=? and p.status='SUCCEEDED' and p.completed_at>=? and p.completed_at<?
+                       and (?=1 or s.organization_id=?)
+                    """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive),
+                    rule.hierarchyLevel(), rule.organizationId());
             Long refunds = jdbc.queryForObject("""
                     select coalesce(sum(r.amount_minor),0) from refund_transaction r
                     join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
+                    join charging_order co on co.tenant_id=p.tenant_id and co.id=p.order_id
+                    join connector c on c.tenant_id=co.tenant_id and c.id=co.connector_id
+                    join device d on d.tenant_id=c.tenant_id and d.id=c.device_id
+                    join station s on s.tenant_id=d.tenant_id and s.id=d.station_id
                      where r.tenant_id=? and r.status='SUCCEEDED' and r.completed_at>=? and r.completed_at<?
-                    """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive));
+                       and (?=1 or s.organization_id=?)
+                    """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive),
+                    rule.hierarchyLevel(), rule.organizationId());
             long gross = Math.max(0, value(payments) - value(refunds));
-            long settlement = Math.multiplyExact(gross, rule.shareBasisPoints()) / 10_000;
+            SettlementCalculator.Amounts amounts = SettlementCalculator.calculate(gross,
+                    rule.platformServiceFeeBasisPoints(), rule.fixedServiceFeeMinor(), rule.shareBasisPoints());
+            long platformFee = amounts.platformServiceFeeMinor();
+            long settlement = amounts.beneficiarySettlementMinor();
             UUID id = UUID.randomUUID();
             jdbc.update("""
                     insert into settlement_statement
                         (id, tenant_id, rule_id, period_start, period_end,
-                         gross_amount_minor, settlement_amount_minor, status)
-                    values (?, ?, ?, ?, ?, ?, ?, 'DRAFT')
-                    """, id, tenantId, request.ruleId(), request.periodStart(), request.periodEnd(), gross, settlement);
+                         gross_amount_minor, platform_service_fee_minor, settlement_amount_minor, status)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT')
+                    """, id, tenantId, request.ruleId(), request.periodStart(), request.periodEnd(), gross,
+                    platformFee, settlement);
             SettlementView view = new SettlementView(id, request.ruleId(), request.periodStart(), request.periodEnd(),
-                    gross, settlement, "DRAFT");
+                    gross, platformFee, settlement, "DRAFT");
             audit.record("SETTLEMENT_GENERATED", "settlement_statement", id, null, view);
             return view;
         });
@@ -398,12 +435,14 @@ final class FinanceAdminController {
     List<SettlementView> settlements() {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> jdbc.query("""
-                select id, rule_id, period_start, period_end, gross_amount_minor, settlement_amount_minor, status
+                select id, rule_id, period_start, period_end, gross_amount_minor,
+                       platform_service_fee_minor, settlement_amount_minor, status
                   from settlement_statement where tenant_id=? order by created_at desc limit 200
                 """, (result, row) -> new SettlementView(
                     result.getObject("id", UUID.class), result.getObject("rule_id", UUID.class),
                     result.getObject("period_start", LocalDate.class), result.getObject("period_end", LocalDate.class),
-                    result.getLong("gross_amount_minor"), result.getLong("settlement_amount_minor"),
+                    result.getLong("gross_amount_minor"), result.getLong("platform_service_fee_minor"),
+                    result.getLong("settlement_amount_minor"),
                     result.getString("status")), tenantId));
     }
 
@@ -551,6 +590,25 @@ final class FinanceAdminController {
                 .orElseThrow(() -> new IllegalArgumentException("Merchant channel does not exist"));
     }
 
+    private SettlementRuleView settlementRule(UUID tenantId, UUID ruleId) {
+        return jdbc.query("""
+                select r.id, r.organization_id, o.name organization_name, r.name, r.beneficiary_code,
+                       r.share_basis_points, r.platform_service_fee_basis_points, r.fixed_service_fee_minor,
+                       r.effective_from, r.effective_until, r.status
+                  from settlement_rule r
+                  join operator_organization o on o.tenant_id=r.tenant_id and o.id=r.organization_id
+                 where r.tenant_id=? and r.id=?
+                """, (result, row) -> new SettlementRuleView(
+                result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                result.getString("organization_name"), result.getString("name"),
+                result.getString("beneficiary_code"), result.getInt("share_basis_points"),
+                result.getInt("platform_service_fee_basis_points"), result.getLong("fixed_service_fee_minor"),
+                result.getObject("effective_from", LocalDate.class),
+                result.getObject("effective_until", LocalDate.class), result.getString("status")),
+                tenantId, ruleId).stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Settlement rule does not exist"));
+    }
+
     record CreateRefundRequest(@NotNull UUID paymentId, @Min(1) long amountMinor,
                                @NotBlank @Size(max = 500) String reason) { }
     record ReconciliationRequest(@NotBlank String channel, @NotNull LocalDate statementDate,
@@ -559,8 +617,11 @@ final class FinanceAdminController {
     record ReconciliationRow(@NotBlank @Size(max = 64) String merchantOrderNo,
                              @Size(max = 128) String providerTransactionNo, @Min(0) long amountMinor) { }
     record CreateSettlementRuleRequest(@NotBlank @Size(max = 160) String name,
+                                       @NotNull UUID organizationId,
                                        @NotBlank @Size(max = 96) String beneficiaryCode,
                                        @Min(0) @Max(10_000) int shareBasisPoints,
+                                       @Min(0) @Max(10_000) int platformServiceFeeBasisPoints,
+                                       @Min(0) long fixedServiceFeeMinor,
                                        @NotNull LocalDate effectiveFrom, LocalDate effectiveUntil) { }
     record GenerateSettlementRequest(@NotNull UUID ruleId, @NotNull LocalDate periodStart,
                                      @NotNull LocalDate periodEnd) { }
@@ -589,7 +650,8 @@ final class FinanceAdminController {
                       String providerTransactionNo, long amountMinor, long originalPaymentAmountMinor,
                       String currency, String reason) { }
     record PaymentMatch(UUID id, long amountMinor, String providerTransactionNo) { }
-    record Rule(int shareBasisPoints) { }
+    record Rule(UUID organizationId, int shareBasisPoints, int platformServiceFeeBasisPoints,
+                long fixedServiceFeeMinor, int hierarchyLevel) { }
     record WalletBalance(UUID id, long balanceMinor) { }
     record MerchantChannelView(UUID id, String channel, String merchantId, String applicationId,
                                String secretReference, String notifyUrl, String refundNotifyUrl,
@@ -600,10 +662,13 @@ final class FinanceAdminController {
     record RefundView(UUID id, UUID paymentId, String merchantRefundNo, String providerRefundNo,
                       long amountMinor, String status, String reason, Instant createdAt, Instant completedAt) { }
     record ReconciliationResult(UUID batchId, String status, int totalCount, int matchedCount, int exceptionCount) { }
-    record SettlementRuleView(UUID id, String name, String beneficiaryCode, int shareBasisPoints,
+    record SettlementRuleView(UUID id, UUID organizationId, String organizationName, String name,
+                              String beneficiaryCode, int shareBasisPoints,
+                              int platformServiceFeeBasisPoints, long fixedServiceFeeMinor,
                               LocalDate effectiveFrom, LocalDate effectiveUntil, String status) { }
     record SettlementView(UUID id, UUID ruleId, LocalDate periodStart, LocalDate periodEnd,
-                          long grossAmountMinor, long settlementAmountMinor, String status) { }
+                          long grossAmountMinor, long platformServiceFeeMinor,
+                          long settlementAmountMinor, String status) { }
     record InvoiceView(UUID id, UUID orderId, String title, String taxNumber, @Email String email,
                        long amountMinor, String status, String invoiceUrl, Instant createdAt) { }
 }

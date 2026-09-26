@@ -53,7 +53,11 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
             return;
         }
         String roleClause;
-        if (path.startsWith("/api/v1/admin/access/")) {
+        if (path.startsWith("/api/v1/admin/organizations") && "GET".equals(request.getMethod())) {
+            roleClause = "m.role_code in ('TENANT_ADMIN','OPERATOR','FINANCE')";
+        } else if (path.startsWith("/api/v1/admin/organizations")) {
+            roleClause = "m.role_code='TENANT_ADMIN'";
+        } else if (path.startsWith("/api/v1/admin/access/")) {
             roleClause = "m.role_code='TENANT_ADMIN'";
         } else if (path.startsWith("/api/v1/admin/legal/")) {
             roleClause = "m.role_code='TENANT_ADMIN'";

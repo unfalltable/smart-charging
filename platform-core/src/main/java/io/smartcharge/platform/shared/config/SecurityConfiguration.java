@@ -60,6 +60,10 @@ class SecurityConfiguration {
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/api/v1/public/**",
                                 "/api/v1/auth/miniapp/**").permitAll()
                         .requestMatchers("/internal/**").hasAuthority("SCOPE_internal")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/admin/organizations/**")
+                            .hasAnyAuthority("SCOPE_admin", "SCOPE_operator", "SCOPE_finance")
+                        .requestMatchers("/api/v1/admin/organizations/**").hasAuthority("SCOPE_admin")
+                        .requestMatchers("/api/v1/admin/organizations").hasAuthority("SCOPE_admin")
                         .requestMatchers("/api/v1/admin/access/**").hasAuthority("SCOPE_admin")
                         .requestMatchers("/api/v1/admin/legal/**").hasAuthority("SCOPE_admin")
                         .requestMatchers("/api/v1/admin/operations/audit").hasAnyAuthority("SCOPE_admin", "SCOPE_auditor")
