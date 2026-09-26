@@ -3,7 +3,8 @@ $workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $startScriptPath = Join-Path $workspace 'ops/start-local.ps1'
 $configurationScriptPath = Join-Path $workspace 'ops/configuration.ps1'
 $managerScriptPath = Join-Path $workspace 'ops/manage-config.ps1'
-foreach ($scriptPath in @($startScriptPath, $configurationScriptPath, $managerScriptPath)) {
+$httpResponseScriptPath = Join-Path $workspace 'ops/http-response.ps1'
+foreach ($scriptPath in @($startScriptPath, $configurationScriptPath, $managerScriptPath, $httpResponseScriptPath)) {
     $parserTokens = $null
     $parserErrors = $null
     [System.Management.Automation.Language.Parser]::ParseFile(
@@ -14,6 +15,12 @@ foreach ($scriptPath in @($startScriptPath, $configurationScriptPath, $managerSc
     if ($parserErrors.Count -gt 0) {
         throw "$scriptPath contains PowerShell parse errors: $($parserErrors.Message -join '; ')"
     }
+}
+. $httpResponseScriptPath
+$revisionFixture = 'revision-check'
+$revisionBytes = [Text.Encoding]::UTF8.GetBytes("$revisionFixture`n")
+if ((Convert-HttpContentToText -Content $revisionBytes).Trim() -ne $revisionFixture) {
+    throw 'HTTP response byte content was not decoded as UTF-8 text.'
 }
 
 $startScript = Get-Content -LiteralPath $startScriptPath -Raw
@@ -95,11 +102,16 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
     }
 }
 foreach ($requiredBuildRevisionSetting in @('APP_BUILD_REVISION', '/actuator/info', '/build-revision',
-        'webRevision', 'expectedRevision')) {
+        'webRevision', 'expectedRevision', 'Convert-HttpContentToText')) {
     if ($startScript -notmatch [regex]::Escape($requiredBuildRevisionSetting) -and
             $compose -notmatch [regex]::Escape($requiredBuildRevisionSetting)) {
         throw "Runtime build revision verification is missing: $requiredBuildRevisionSetting"
     }
+}
+$nginxConfiguration = Get-Content -LiteralPath (Join-Path $workspace 'ops/nginx.local.conf') -Raw
+if ($nginxConfiguration -notmatch 'location = /build-revision' -or
+        $nginxConfiguration -notmatch '(?s)location = /build-revision.+?default_type text/plain') {
+    throw 'The web build revision endpoint must explicitly return UTF-8 text.'
 }
 foreach ($requiredIdentitySetting in @('profiles: ["bundled-identity"]', 'start', '--optimized', '--import-realm',
         'KC_BOOTSTRAP_ADMIN_PASSWORD', 'OIDC_JWK_SET_URI', 'postgres-init-keycloak.sh',

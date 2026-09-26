@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $PSScriptRoot 'compose.local.yaml'
 . (Join-Path $PSScriptRoot 'configuration.ps1')
+. (Join-Path $PSScriptRoot 'http-response.ps1')
 
 $configurationState = Initialize-DeploymentConfiguration -Workspace $workspace
 $environmentFile = $configurationState.Path
@@ -121,7 +122,7 @@ try {
                 $identityReady = -not [string]::IsNullOrWhiteSpace([string]$identity.issuer)
             }
             $revisionReady = [string]$build.build.revision -eq $buildRevision
-            $webRevision = ([string]$webBuild.Content).Trim()
+            $webRevision = (Convert-HttpContentToText -Content $webBuild.Content).Trim()
             $webRevisionReady = $webRevision -eq $buildRevision
             $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and `
                 $identityReady -and $revisionReady -and $webRevisionReady
