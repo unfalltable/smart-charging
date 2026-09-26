@@ -20,9 +20,9 @@ hs_err_pid*
 # Local environment and developer-only configuration
 .env
 .env.*
-!.env.example
-!.env.*.example
 /apps/miniapp/project.private.config.json
+/apps/miniapp/src/deployment.config.js
+/runtime-secrets/
 
 # Runtime data and logs
 *.log

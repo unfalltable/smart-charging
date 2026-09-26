@@ -22,13 +22,16 @@
 
 ## Docker 启动
 
-Docker 启动使用完整鉴权行为。首次执行：
+所有部署参数现在由一套配置管理器维护。首次执行：
 
 ```powershell
+.\config-manager.cmd init
+.\config-manager.cmd wizard
+.\config-manager.cmd validate
 .\docker-start.cmd
 ```
 
-脚本会生成仅保存在本机的随机密码和密钥，然后提示在 `.env.docker` 中填写真实 OIDC 配置。配置完成后再次运行同一命令。系统不会自动创建任何业务记录。
+配置管理器把部署参数写入 Git 忽略的 `.env.docker`，自动生成强随机内部秘密，交互收集真实 OIDC、微信、支付证书、设备 TLS 和小程序环境，并在启动前统一校验。运行 `.\config-manager.cmd status` 可脱敏查看配置状态。系统不会自动创建任何业务记录。
 
 如果电脑以前运行过带固定试用数据的旧版本，启动脚本会拒绝沿用旧数据卷。确认旧数据不需要保留后执行 `.\docker-stop.cmd -DeleteData`，再重新启动，即可得到空库和全新的秘密。
 
@@ -39,18 +42,13 @@ $env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
 .\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName -AdminSubject $oidcSubject -AdminDisplayName $adminName
 ```
 
-真实设备网关默认不启动。准备好设备协议适配器和 mTLS 证书后，在 `.env.docker` 设置 `DEVICE_TLS_DIRECTORY`，再运行：
+真实设备网关默认不启动。准备好设备协议适配器和 mTLS 证书后，通过配置向导启用；启动脚本会检查三份真实证书后才加载网关容器。
 
-```powershell
-.\docker-start.cmd -EnableDeviceGateway
-```
-
-详细配置见 [Docker 部署说明](docs/docker-local.md)。停止服务运行 `.\docker-stop.cmd`；只有明确需要不可恢复地清除本机数据库时才运行 `.\docker-stop.cmd -DeleteData`。
+完整配置清单见 [统一配置管理](docs/configuration.md)，启动流程见 [Docker 部署说明](docs/docker-local.md)。停止服务运行 `.\docker-stop.cmd`；只有明确需要不可恢复地清除本机数据库时才运行 `.\docker-stop.cmd -DeleteData`。
 
 ## 小程序
 
-微信小程序必须在微信开发者工具或微信客户端运行。发布前必须在
-[apps/miniapp/src/config.js](apps/miniapp/src/config.js) 写入对应环境的真实 HTTPS API 地址和真实租户编码；缺失时小程序会直接拒绝启动。
+微信小程序必须在微信开发者工具或微信客户端运行。配置管理器根据开发版、体验版和正式版设置生成不入库的 `deployment.config.js`；不再修改源码，也不会附带假地址或占位租户。所选环境缺少真实 HTTPS API 地址或租户编码时，小程序会直接拒绝启动。
 
 ## 验证
 

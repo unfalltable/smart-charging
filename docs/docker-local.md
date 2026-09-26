@@ -14,18 +14,21 @@
 首次运行：
 
 ```powershell
+.\config-manager.cmd init
+.\config-manager.cmd wizard
+.\config-manager.cmd validate
 .\docker-start.cmd
 ```
 
-脚本生成 `.env.docker` 和高强度随机秘密。填写以下真实值后再次运行：
+`init` 生成 `.env.docker` 和高强度随机内部秘密；`wizard` 收集真实外部配置；`validate` 一次检查必填值、URL、端口、密钥长度、JSON、证书文件和已启用能力。至少需要提供：
 
 - `OIDC_ISSUER_URI`
 - `VITE_OIDC_AUTHORIZATION_ENDPOINT`
 - `VITE_OIDC_TOKEN_ENDPOINT`
 - `VITE_OIDC_CLIENT_ID`
-- 必要时调整 `APP_JWT_ISSUER`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS` 和回调地址
+- 必要时调整 `APP_JWT_ISSUER`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS`、scope 和回调地址
 
-配置不完整时启动脚本会列出缺失项并停止。启动完成后：
+配置不完整时启动脚本会列出缺失项并停止。运行 `.\config-manager.cmd status` 可以脱敏查看全部配置，不会输出完整密码、AppSecret、APIv3 密钥或主密钥。启动完成后：
 
 如果脚本报告检测到旧演示环境，先确认旧数据无需保留，再执行 `.\docker-stop.cmd -DeleteData`。该命令会删除旧 PostgreSQL、Valkey、NATS 数据卷和旧秘密文件，随后启动会创建全新的空库。
 
@@ -52,8 +55,8 @@ Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
 1. 根据厂家协议实现并验收协议适配器。
 2. 在管理后台创建真实场站和设备，填写设备实际端口数及额定功率。
 3. 轮换设备凭据，并通过安全通道写入实体设备。
-4. 准备 `tls.crt`、`tls.key`、`ca.crt`，将所在目录写入 `.env.docker` 的 `DEVICE_TLS_DIRECTORY`。
-5. 运行 `.\docker-start.cmd -EnableDeviceGateway`。
+4. 准备 `tls.crt`、`tls.key`、`ca.crt`，通过配置向导填写目录并启用设备网关。
+5. 运行 `.\config-manager.cmd validate` 和 `.\docker-start.cmd`。
 
 网关不接受明文生产连接，也没有内置设备编码或固定密钥。
 
@@ -61,9 +64,9 @@ Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
 
 取得真实微信资质后：
 
-1. 在服务环境配置 `WECHAT_IDENTITY_ENABLED=true`、AppID、AppSecret 和真实租户编码。
-2. 在管理后台创建微信商户通道，引用部署环境中的商户秘密。
-3. 在小程序 [config.js](../apps/miniapp/src/config.js) 填写真实 HTTPS API 地址和租户编码。
+1. 在配置向导中启用微信身份，填写 AppID、AppSecret 和真实租户编码。
+2. 配置微信支付证书目录、APIv3 密钥等秘密，再在管理后台创建微信商户通道并引用 `env:WECHAT_PRIMARY`。
+3. 在配置向导中填写小程序对应版本的真实 HTTPS API 地址和租户编码；工具自动生成本机部署配置。
 4. 使用实体设备和微信支付环境执行下单、启动、计量、停止、结算、支付、退款和对账验收。
 
 系统没有“支付成功”模拟接口，支付状态只能由验签回调或支付平台主动查询推进。
@@ -77,3 +80,5 @@ Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
 ```
 
 该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷，无法恢复。
+
+全部字段及生产环境的秘密管理边界见 [统一配置管理](configuration.md)。
