@@ -36,6 +36,61 @@ function Get-ProvisioningFailureDetail {
     return [string]$Failure.Exception.Message
 }
 
+function Resolve-BundledPlatformAdminSubject {
+    param([Parameter(Mandatory)][hashtable]$Configuration)
+
+    $issuer = ([string]$Configuration['OIDC_ISSUER_URI']).TrimEnd('/')
+    $realmMarker = '/realms/'
+    $realmPosition = $issuer.IndexOf($realmMarker, [StringComparison]::OrdinalIgnoreCase)
+    if ($realmPosition -le 0) {
+        throw 'Bundled OIDC issuer URI does not contain a Keycloak realm path.'
+    }
+    $keycloakBase = $issuer.Substring(0, $realmPosition)
+    $realm = [string]$Configuration['KEYCLOAK_REALM']
+    $username = [string]$Configuration['PLATFORM_ADMIN_USERNAME']
+    $bootstrapUsername = [string]$Configuration['KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME']
+    $bootstrapPassword = [string]$Configuration['KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD']
+    foreach ($requiredValue in @($realm, $username, $bootstrapUsername, $bootstrapPassword)) {
+        if ([string]::IsNullOrWhiteSpace($requiredValue)) {
+            throw 'Bundled identity administration configuration is incomplete.'
+        }
+    }
+
+    try {
+        $adminTokenResponse = Invoke-RestMethod -Method Post `
+            -Uri "$keycloakBase/realms/master/protocol/openid-connect/token" `
+            -ContentType 'application/x-www-form-urlencoded' `
+            -Body @{
+                grant_type = 'password'
+                client_id = 'admin-cli'
+                username = $bootstrapUsername
+                password = $bootstrapPassword
+            } `
+            -TimeoutSec 15
+        $adminToken = [string]$adminTokenResponse.access_token
+        if ([string]::IsNullOrWhiteSpace($adminToken)) {
+            throw 'Keycloak did not issue an administration token.'
+        }
+        $encodedRealm = [Uri]::EscapeDataString($realm)
+        $encodedUsername = [Uri]::EscapeDataString($username)
+        $users = @(Invoke-RestMethod -Method Get `
+            -Uri "$keycloakBase/admin/realms/$encodedRealm/users?username=$encodedUsername&exact=true" `
+            -Headers @{ Authorization = "Bearer $adminToken" } `
+            -TimeoutSec 15)
+        $matches = @($users | Where-Object {
+            [string]::Equals([string]$_.username, $username, [StringComparison]::Ordinal)
+        })
+        if ($matches.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$matches[0].id)) {
+            throw "Expected exactly one bundled platform administrator named '$username'."
+        }
+        return [string]$matches[0].id
+    }
+    catch {
+        $detail = Get-ProvisioningFailureDetail -Failure $_
+        throw "Cannot resolve the real Keycloak platform administrator subject: $detail"
+    }
+}
+
 $configurationPath = Get-DeploymentConfigurationPath -Workspace $workspace
 $configuration = if (Test-Path -LiteralPath $configurationPath -PathType Leaf) {
     Read-DeploymentConfiguration -Path $configurationPath
@@ -66,7 +121,7 @@ if ([string]::IsNullOrWhiteSpace($accessToken)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($AdminSubject) -and $bundledIdentity) {
-    $AdminSubject = [string]$configuration['PLATFORM_ADMIN_SUBJECT']
+    $AdminSubject = Resolve-BundledPlatformAdminSubject -Configuration $configuration
 }
 if ([string]::IsNullOrWhiteSpace($AdminDisplayName) -and $bundledIdentity) {
     $AdminDisplayName = [string]$configuration['PLATFORM_ADMIN_DISPLAY_NAME']

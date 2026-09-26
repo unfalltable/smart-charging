@@ -32,6 +32,13 @@ $provisionErrors = $null
 if ($provisionErrors.Count -gt 0) {
     throw "Tenant provisioning script contains PowerShell parse errors: $($provisionErrors.Message -join '; ')"
 }
+$provisionScript = Get-Content -LiteralPath $provisionScriptPath -Raw
+foreach ($requiredSubjectLookup in @('Resolve-BundledPlatformAdminSubject', '/admin/realms/',
+        'PLATFORM_ADMIN_USERNAME', 'KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME')) {
+    if (-not $provisionScript.Contains($requiredSubjectLookup)) {
+        throw "Bundled tenant provisioning does not resolve the real Keycloak subject: $requiredSubjectLookup"
+    }
+}
 $provisioningController = Get-Content -LiteralPath (Join-Path $workspace 'platform-core/src/main/java/io/smartcharge/platform/identity/TenantProvisioningController.java') -Raw
 if ($provisioningController -notmatch 'on conflict \(tenant_id, user_id, role_code\) do update' -or
         $provisioningController -notmatch 'TENANT_PROVISIONING_RECONCILED') {
