@@ -89,7 +89,8 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
 }
 foreach ($requiredIdentitySetting in @('profiles: ["bundled-identity"]', 'start', '--optimized', '--import-realm',
         'KC_BOOTSTRAP_ADMIN_PASSWORD', 'OIDC_JWK_SET_URI', 'postgres-init-keycloak.sh',
-        'INTERNAL_PROVISIONING_CLIENT_ID', 'service_completed_successfully')) {
+        'INTERNAL_PROVISIONING_CLIENT_ID', 'IDENTITY_PROVIDER_MODE', 'PLATFORM_ADMIN_USERNAME',
+        'INITIAL_TENANT_ID', 'service_completed_successfully')) {
     if (-not $compose.Contains($requiredIdentitySetting)) {
         throw "Bundled identity runtime setting is missing: $requiredIdentitySetting"
     }

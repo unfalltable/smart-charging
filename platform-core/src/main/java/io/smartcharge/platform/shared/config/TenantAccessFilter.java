@@ -18,10 +18,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public final class TenantAccessFilter extends OncePerRequestFilter {
     private final JdbcTemplate jdbc;
     private final TenantJdbcExecutor tenantJdbc;
+    private final InitialTenantAdminReconciler initialAdminReconciler;
 
-    public TenantAccessFilter(JdbcTemplate jdbc, TenantJdbcExecutor tenantJdbc) {
+    public TenantAccessFilter(JdbcTemplate jdbc, TenantJdbcExecutor tenantJdbc,
+                              InitialTenantAdminReconciler initialAdminReconciler) {
         this.jdbc = jdbc;
         this.tenantJdbc = tenantJdbc;
+        this.initialAdminReconciler = initialAdminReconciler;
     }
 
     @Override
@@ -59,6 +62,9 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
                       and m.status='ACTIVE' and %s
                 )
                 """.formatted(roleClause), Boolean.class, tenantId, subject)));
+        if (!allowed) {
+            allowed = initialAdminReconciler.reconcile(tenantId, authentication);
+        }
         if (!allowed) {
             response.setStatus(403);
             response.setContentType("application/json");

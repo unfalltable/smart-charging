@@ -43,6 +43,9 @@ charging:
     oidc-jwk-set-uri: ${OIDC_JWK_SET_URI:}
     api-audience: ${API_JWT_AUDIENCE:smart-charging-api}
     provisioning-client-id: ${INTERNAL_PROVISIONING_CLIENT_ID:}
+    identity-provider-mode: ${IDENTITY_PROVIDER_MODE:external}
+    initial-admin-username: ${PLATFORM_ADMIN_USERNAME:}
+    initial-tenant-id: ${INITIAL_TENANT_ID:}
     access-token-minutes: ${ACCESS_TOKEN_MINUTES:15}
     refresh-token-days: ${REFRESH_TOKEN_DAYS:30}
   identity:
