@@ -196,6 +196,7 @@ services:
       context: ..
       dockerfile: ops/admin-web.Dockerfile
       args:
+        APP_BUILD_REVISION: ${APP_BUILD_REVISION:?APP_BUILD_REVISION is required}
         VITE_API_BASE: /api/v1
         VITE_OIDC_AUTHORIZATION_ENDPOINT: ${VITE_OIDC_AUTHORIZATION_ENDPOINT:-}
         VITE_OIDC_TOKEN_ENDPOINT: ${VITE_OIDC_TOKEN_ENDPOINT:-}

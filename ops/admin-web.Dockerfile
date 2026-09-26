@@ -11,6 +11,7 @@ ARG VITE_OIDC_TOKEN_ENDPOINT
 ARG VITE_OIDC_CLIENT_ID
 ARG VITE_OIDC_REDIRECT_URI
 ARG VITE_OIDC_SCOPES
+ARG APP_BUILD_REVISION=unknown
 ENV VITE_API_BASE=${VITE_API_BASE}
 ENV VITE_OIDC_AUTHORIZATION_ENDPOINT=${VITE_OIDC_AUTHORIZATION_ENDPOINT}
 ENV VITE_OIDC_TOKEN_ENDPOINT=${VITE_OIDC_TOKEN_ENDPOINT}
@@ -21,6 +22,7 @@ RUN test -n "$VITE_OIDC_AUTHORIZATION_ENDPOINT" && \
     test -n "$VITE_OIDC_TOKEN_ENDPOINT" && \
     test -n "$VITE_OIDC_CLIENT_ID"
 RUN npm run build --workspace=@smartcharge/admin-web
+RUN printf '%s\n' "$APP_BUILD_REVISION" > /workspace/apps/admin-web/dist/build-revision
 
 FROM nginx:1.29-alpine
 COPY ops/nginx.local.conf /etc/nginx/conf.d/default.conf

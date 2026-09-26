@@ -94,7 +94,8 @@ foreach ($requiredRuntimeSetting in @('WECHAT_PRIMARY_PRIVATE_KEY_PATH', 'VITE_O
         throw "Docker runtime is not connected to unified setting: $requiredRuntimeSetting"
     }
 }
-foreach ($requiredBuildRevisionSetting in @('APP_BUILD_REVISION', '/actuator/info', 'expectedRevision')) {
+foreach ($requiredBuildRevisionSetting in @('APP_BUILD_REVISION', '/actuator/info', '/build-revision',
+        'webRevision', 'expectedRevision')) {
     if ($startScript -notmatch [regex]::Escape($requiredBuildRevisionSetting) -and
             $compose -notmatch [regex]::Escape($requiredBuildRevisionSetting)) {
         throw "Runtime build revision verification is missing: $requiredBuildRevisionSetting"

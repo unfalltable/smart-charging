@@ -111,6 +111,7 @@ try {
             $core = Invoke-RestMethod -Uri "http://127.0.0.1:$corePort/actuator/health/readiness" -TimeoutSec 3
             $build = Invoke-RestMethod -Uri "http://127.0.0.1:$corePort/actuator/info" -TimeoutSec 3
             $web = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/healthz" -TimeoutSec 3 -UseBasicParsing
+            $webBuild = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/build-revision" -TimeoutSec 3 -UseBasicParsing
             $homepageResponse = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/" -TimeoutSec 3 -UseBasicParsing
             $homepageReady = $homepageResponse.StatusCode -eq 200 -and `
                 $homepageResponse.Content -match '<div id="app"></div>'
@@ -120,11 +121,13 @@ try {
                 $identityReady = -not [string]::IsNullOrWhiteSpace([string]$identity.issuer)
             }
             $revisionReady = [string]$build.build.revision -eq $buildRevision
+            $webRevision = ([string]$webBuild.Content).Trim()
+            $webRevisionReady = $webRevision -eq $buildRevision
             $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and `
-                $identityReady -and $revisionReady
+                $identityReady -and $revisionReady -and $webRevisionReady
             $lastReadinessStatus = "core=$($core.status), healthz=$($web.StatusCode), " +
                 "homepage=$homepageReady, identity=$identityReady, revision=$([string]$build.build.revision), " +
-                "expectedRevision=$buildRevision"
+                "webRevision=$webRevision, expectedRevision=$buildRevision"
         }
         catch {
             $ready = $false
