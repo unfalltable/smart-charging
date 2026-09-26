@@ -151,11 +151,21 @@ try {
             $testState.Values['OIDC_JWK_SET_URI'] -notmatch '^http://keycloak:') {
         throw "Fresh configuration must provide a valid bundled identity service: $($initialErrors -join '; ')"
     }
+    if ($testState.Values['VITE_OIDC_SCOPES'] -ne 'openid') {
+        throw 'Bundled identity must request only the standard OIDC login scope.'
+    }
     $realmPath = Export-BundledIdentityConfiguration -Workspace $testRoot -Values $testState.Values
     $realm = Get-Content -LiteralPath $realmPath -Raw | ConvertFrom-Json
     if ($realm.realm -ne 'smart-charging' -or $realm.clients[0].clientId -ne 'smart-charging-admin' -or
             $realm.roles.realm.name -notcontains 'admin') {
         throw 'Generated bundled identity realm is incomplete.'
+    }
+    $platformScope = @($realm.clientScopes | Where-Object { $_.name -eq 'smart-charging-api' })[0]
+    if ($null -eq $platformScope -or
+            $platformScope.protocolMappers.protocolMapper -notcontains 'oidc-audience-mapper' -or
+            $platformScope.protocolMappers.protocolMapper -notcontains 'oidc-usermodel-attribute-mapper' -or
+            $platformScope.protocolMappers.protocolMapper -notcontains 'oidc-usermodel-realm-role-mapper') {
+        throw 'Generated platform client scope must include audience, tenant and realm-role claims.'
     }
     $realmText = Get-Content -LiteralPath $realmPath -Raw
     if ($realmText.Contains([string]$testState.Values['POSTGRES_PASSWORD']) -or

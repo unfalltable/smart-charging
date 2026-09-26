@@ -40,7 +40,7 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'VITE_OIDC_TOKEN_ENDPOINT' 'Identity' $true $false '' '' 'OIDC token endpoint'
     New-ConfigurationDefinition 'VITE_OIDC_CLIENT_ID' 'Identity' $true $false '' '' 'Admin web OIDC public client ID'
     New-ConfigurationDefinition 'VITE_OIDC_REDIRECT_URI' 'Identity' $true $false 'http://127.0.0.1:8088/auth/callback' '' 'Admin web login callback URI'
-    New-ConfigurationDefinition 'VITE_OIDC_SCOPES' 'Identity' $true $false 'openid profile offline_access admin operator finance auditor support' '' 'OIDC scopes requested by the admin web'
+    New-ConfigurationDefinition 'VITE_OIDC_SCOPES' 'Identity' $true $false 'openid' '' 'OIDC scopes requested by the admin web'
 
     New-ConfigurationDefinition 'KEYCLOAK_IMAGE' 'Bundled identity' $true $false 'quay.io/keycloak/keycloak:26.7.4' '' 'Pinned official Keycloak container image'
     New-ConfigurationDefinition 'KEYCLOAK_PORT' 'Bundled identity' $true $false '19090' '' 'Bundled Keycloak HTTP port on loopback'
@@ -260,7 +260,7 @@ function Set-BundledIdentityConfiguration {
         VITE_OIDC_TOKEN_ENDPOINT = "$issuer/protocol/openid-connect/token"
         VITE_OIDC_CLIENT_ID = [string]$Values['KEYCLOAK_CLIENT_ID']
         VITE_OIDC_REDIRECT_URI = "http://127.0.0.1:$adminPort/auth/callback"
-        VITE_OIDC_SCOPES = 'openid profile email offline_access'
+        VITE_OIDC_SCOPES = 'openid'
     }
     $changed = $false
     foreach ($entry in $derived.GetEnumerator()) {
@@ -660,6 +660,22 @@ function Export-BundledIdentityConfiguration {
                     'id.token.claim' = 'false'
                     'access.token.claim' = 'true'
                     'userinfo.token.claim' = 'false'
+                }
+            },
+            [ordered]@{
+                name = 'platform-realm-roles'
+                protocol = 'openid-connect'
+                protocolMapper = 'oidc-usermodel-realm-role-mapper'
+                consentRequired = $false
+                config = [ordered]@{
+                    'claim.name' = 'realm_access.roles'
+                    'jsonType.label' = 'String'
+                    'multivalued' = 'true'
+                    'id.token.claim' = 'false'
+                    'access.token.claim' = 'true'
+                    'userinfo.token.claim' = 'false'
+                    'introspection.token.claim' = 'true'
+                    'usermodel.realmRoleMapping.rolePrefix' = ''
                 }
             }
         )

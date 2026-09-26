@@ -193,7 +193,7 @@ services:
         VITE_OIDC_TOKEN_ENDPOINT: ${VITE_OIDC_TOKEN_ENDPOINT:-}
         VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:-}
         VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:-}
-        VITE_OIDC_SCOPES: ${VITE_OIDC_SCOPES:-openid profile offline_access admin operator finance auditor support}
+        VITE_OIDC_SCOPES: ${VITE_OIDC_SCOPES:-openid}
     ports:
       - "127.0.0.1:${ADMIN_WEB_PORT:-8088}:8080"
     depends_on:

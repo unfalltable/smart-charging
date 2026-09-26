@@ -4,7 +4,7 @@ const authorizationEndpoint = import.meta.env.VITE_OIDC_AUTHORIZATION_ENDPOINT a
 const tokenEndpoint = import.meta.env.VITE_OIDC_TOKEN_ENDPOINT as string | undefined
 const clientId = import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined
 const scopes = (import.meta.env.VITE_OIDC_SCOPES as string | undefined)
-  ?? 'openid profile offline_access admin operator finance auditor support'
+  ?? 'openid'
 
 function redirectUri() {
   return (import.meta.env.VITE_OIDC_REDIRECT_URI as string | undefined)
@@ -58,6 +58,14 @@ export async function initializeAuth() {
     throw new Error('管理端 OIDC 尚未完整配置')
   }
   const query = new URLSearchParams(location.search)
+  const authorizationError = query.get('error')
+  if (authorizationError) {
+    const description = query.get('error_description') ?? authorizationError
+    sessionStorage.removeItem('oidc_state')
+    sessionStorage.removeItem('oidc_verifier')
+    history.replaceState({}, document.title, location.pathname)
+    throw new Error(`企业账号登录失败：${description}`)
+  }
   const code = query.get('code')
   if (code) {
     const state = query.get('state')
