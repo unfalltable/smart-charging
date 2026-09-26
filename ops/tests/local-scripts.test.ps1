@@ -53,6 +53,11 @@ $stopScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/stop-local.ps1
 if ($stopScript -notmatch 'Remove-Item -LiteralPath \$environmentFile') {
     throw 'Deleting legacy Docker data must also remove the obsolete local secret file.'
 }
+foreach ($cleanupOverride in @('ADMIN_WEB_PORT', 'DEVICE_GATEWAY_PORT', 'NATS_MONITOR_PORT')) {
+    if ($stopScript -notmatch 'SetEnvironmentVariable' -or $stopScript -notmatch $cleanupOverride) {
+        throw "Legacy cleanup must override malformed Compose value: $cleanupOverride"
+    }
+}
 
 $compose = Get-Content -LiteralPath (Join-Path $workspace 'ops/compose.local.yaml') -Raw
 foreach ($forbidden in @('simulator:', 'bootstrap:', 'VITE_LOCAL_MODE', 'SPRING_PROFILES_ACTIVE: local',
