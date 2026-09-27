@@ -41,20 +41,21 @@
 | 核心健康检查 | `http://127.0.0.1:18080/actuator/health` |
 | 身份服务 | `http://127.0.0.1:19090/` |
 
-## 开通真实租户
+## 登录并开通真实租户
 
-默认自托管模式已配置一个只能调用内部开通接口的服务账号。填写你自己的真实租户编码和名称：
+读取一次由本机配置管理器生成的初始平台总管理员凭据：
 
 ```powershell
-$tenantCode = Read-Host 'Tenant code (lowercase letters, numbers and hyphens)'
-$tenantName = Read-Host 'Tenant display name'
-.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName
 .\config-manager.cmd credentials
 ```
 
-接口会从 Keycloak 查询该登录用户的真实 `subject`，再在一个数据库事务内创建真实租户、平台用户和首个 `TENANT_ADMIN` 成员，并写入审计记录。相同租户编码可以安全重复执行；即使旧数据库中的租户 ID 与后来生成的 `INITIAL_TENANT_ID` 不一致，也会复用数据库真实租户并补齐管理员关系，不会创建重复租户或返回冲突。登录后管理端通过服务端会话接口读取权威租户列表，而不是直接使用可能过期的令牌租户声明。然后用显示的临时密码登录并立即修改密码。日常成员管理必须从管理后台执行。
+打开管理后台，用临时密码登录并完成改密、动态口令绑定。平台总管理员无需先绑定某个租户即可进入“平台与租户”，创建真实下游租户和首位租户管理员。租户管理员登录后在“账号与权限”邀请员工、分配岗位、冻结/恢复成员、重发邀请、恢复密码，或在员工遗失验证器时撤销旧 MFA 并强制重新绑定。管理员/财务强制 MFA，邀请有有效期，冻结和账号恢复都会立即撤销登录会话；所有变更写入审计日志。
 
-外部 OIDC 模式不保存外部客户端秘密；开通时仍需在当前 PowerShell 会话提供带 `SCOPE_internal` 的真实服务令牌，并传入 `-AdminSubject` 和 `-AdminDisplayName`。
+默认没有 SMTP 时，界面只显示一次随机临时密码，必须通过独立安全渠道交给被邀请人。运行 `config-manager.cmd wizard` 配置真实 SMTP 后，Keycloak 会发送有时效的验证、改密和 MFA 引导邮件。邮件失败时系统自动降级生成一次性临时密码，不会创建不可登录的账号。
+
+`ops/provision-tenant.ps1` 仍用于 CI/自动化或外部 OIDC 受控开通。它通过只允许内部接口的服务身份工作，不是匿名注册入口。
+
+外部 OIDC 模式不保存外部客户端秘密；人员创建、邮件、MFA 和密码恢复由外部身份平台负责，管理后台只关联其真实 OIDC subject。自动开通仍需在当前 PowerShell 会话提供带 `SCOPE_internal` 的真实服务令牌，并传入 `-AdminSubject` 和 `-AdminDisplayName`。
 
 ## 接入真实设备
 

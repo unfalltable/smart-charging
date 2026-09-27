@@ -2,6 +2,7 @@ package io.smartcharge.platform.shared.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -49,6 +51,29 @@ class TenantAccessFilterTest {
 
         assertThat(invoked).isTrue();
         verify(tenantJdbc, never()).readWriteAs(eq(tenantId), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void tenantMemberCannotUseASuspendedTenantEvenWithAStillValidToken() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        TenantJdbcExecutor tenantJdbc = mock(TenantJdbcExecutor.class);
+        when(tenantJdbc.readWriteAs(eq(tenantId), org.mockito.ArgumentMatchers.<Supplier<Boolean>>any()))
+                .thenAnswer(invocation -> invocation.<Supplier<Boolean>>getArgument(1).get());
+        when(jdbc.queryForObject(contains("join tenant t on t.id=m.tenant_id and t.status='ACTIVE'"),
+                eq(Boolean.class), eq(tenantId), eq("verified-platform-owner"))).thenReturn(false);
+        TenantAccessFilter filter = new TenantAccessFilter(jdbc, tenantJdbc,
+                new PlatformAuthority("bundled", "platform-admin"));
+        SecurityContextHolder.getContext().setAuthentication(authentication("tenant-user"));
+        TenantContext.set(tenantId);
+        AtomicBoolean invoked = new AtomicBoolean();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(new MockHttpServletRequest("GET", "/api/v1/operations/dashboard"),
+                response, (request, chainResponse) -> invoked.set(true));
+
+        assertThat(invoked).isFalse();
+        assertThat(response.getStatus()).isEqualTo(403);
+        assertThat(response.getContentAsString()).contains("No active tenant role");
     }
 
     private JwtAuthenticationToken authentication(String username) {

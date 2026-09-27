@@ -49,6 +49,19 @@ class TenantContextFilterTest {
         assertThat(response.getStatus()).isEqualTo(403);
     }
 
+    @Test
+    void platformControlPlaneDoesNotRequireATenantHeader() throws Exception {
+        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority("bundled", "platform-admin"));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/platform/tenants");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicReference<Boolean> invoked = new AtomicReference<>(false);
+
+        filter.doFilter(request, response, (ignoredRequest, ignoredResponse) -> invoked.set(true));
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(invoked.get()).isTrue();
+    }
+
     private MockHttpServletRequest request(UUID tenantId) {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/operations/dashboard");
         request.addHeader("X-Tenant-Id", tenantId.toString());

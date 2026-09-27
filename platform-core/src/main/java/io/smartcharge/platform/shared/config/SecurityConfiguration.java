@@ -60,6 +60,8 @@ class SecurityConfiguration {
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/api/v1/public/**",
                                 "/api/v1/auth/miniapp/**").permitAll()
                         .requestMatchers("/internal/**").hasAuthority("SCOPE_internal")
+                        .requestMatchers("/api/v1/platform/**")
+                            .hasAnyAuthority("SCOPE_platform_admin", "SCOPE_admin")
                         .requestMatchers(HttpMethod.GET, "/api/v1/admin/organizations/**")
                             .hasAnyAuthority("SCOPE_admin", "SCOPE_operator", "SCOPE_finance")
                         .requestMatchers("/api/v1/admin/organizations/**").hasAuthority("SCOPE_admin")

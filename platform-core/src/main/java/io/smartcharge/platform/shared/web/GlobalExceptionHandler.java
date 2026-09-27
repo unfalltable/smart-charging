@@ -1,6 +1,7 @@
 package io.smartcharge.platform.shared.web;
 
 import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.domain.ServiceUnavailableException;
 import java.time.Instant;
 import java.util.List;
 import jakarta.validation.ConstraintViolationException;
@@ -10,6 +11,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,6 +24,18 @@ final class GlobalExceptionHandler {
     ResponseEntity<ApiError> domain(DomainException exception) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("DOMAIN_CONFLICT", exception.getMessage()));
+    }
+
+    @ExceptionHandler(ServiceUnavailableException.class)
+    ResponseEntity<ApiError> serviceUnavailable(ServiceUnavailableException exception) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiError.of("IDENTITY_SERVICE_UNAVAILABLE", exception.getMessage()));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ApiError> forbidden(AccessDeniedException exception) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("ACCESS_DENIED", exception.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

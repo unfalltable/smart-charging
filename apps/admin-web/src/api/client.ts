@@ -62,7 +62,8 @@ export async function loadSessionContext(): Promise<SessionContext> {
   const selected = session.tenants.find((tenant) => tenant.id === previous) ?? session.tenants[0]
   if (!selected) {
     sessionStorage.removeItem('tenant_id')
-    throw new Error('当前账号没有可访问的生产租户，请先完成租户开通')
+    if (session.platformAdministrator) return session
+    throw new Error('当前账号没有可访问的生产租户，请联系平台或租户管理员完成授权')
   }
   sessionStorage.setItem('tenant_id', selected.id)
   return session

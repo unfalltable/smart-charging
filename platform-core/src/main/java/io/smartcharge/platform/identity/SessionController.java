@@ -68,12 +68,25 @@ final class SessionController {
     }
 
     private TenantView memberTenant(UUID tenantId, String subject) {
+        jdbc.update("""
+                update platform_user
+                   set last_login_at=now(), updated_at=now(), version=version+1
+                 where subject=? and status='ACTIVE'
+                """, subject);
+        jdbc.update("""
+                update tenant_membership m
+                   set accepted_at=coalesce(accepted_at, now()), updated_at=now(), version=version+1
+                  from platform_user u
+                 where m.tenant_id=? and m.user_id=u.id and u.subject=? and m.status='ACTIVE'
+                   and (m.accepted_at is not null or m.invite_expires_at is null or m.invite_expires_at > now())
+                """, tenantId, subject);
         List<TenantRole> rows = jdbc.query("""
                 select t.id, t.code, t.display_name, m.role_code
                   from tenant t
                   join tenant_membership m on m.tenant_id=t.id and m.status='ACTIVE'
                   join platform_user u on u.id=m.user_id and u.status='ACTIVE'
                  where t.id=? and t.status='ACTIVE' and u.subject=?
+                   and (m.accepted_at is not null or m.invite_expires_at is null or m.invite_expires_at > now())
                  order by m.role_code
                 """, (result, row) -> new TenantRole(
                 result.getObject("id", UUID.class),

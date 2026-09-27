@@ -74,8 +74,11 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
                 select exists (
                     select 1 from tenant_membership m
                     join platform_user u on u.id=m.user_id
+                    join tenant t on t.id=m.tenant_id and t.status='ACTIVE'
                     where m.tenant_id=? and u.subject=? and u.status='ACTIVE'
-                      and m.status='ACTIVE' and %s
+                      and m.status='ACTIVE'
+                      and (m.accepted_at is not null or m.invite_expires_at is null or m.invite_expires_at > now())
+                      and %s
                 )
                 """.formatted(roleClause), Boolean.class, tenantId, subject)));
         if (!allowed) {

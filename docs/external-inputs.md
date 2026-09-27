@@ -51,7 +51,7 @@
 
 支付宝属于第二渠道阶段，需要支付宝小程序 AppID、应用私钥/平台公钥、商户能力与模板消息资质；微信首发不需要先提供。
 
-首个租户和管理员只能由具有 `SCOPE_internal` 的 OIDC 服务身份开通，避免留下匿名初始化后门：
+自托管身份模式由显式 `platform_admin` 在“平台与租户”开通首个租户和管理员；外部 OIDC 的自动化部署也可由具有 `SCOPE_internal` 的服务身份开通。两种方式都不提供匿名初始化后门：
 
 ```powershell
 $env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
@@ -60,4 +60,4 @@ $env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
 Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
 ```
 
-开通接口需要真实参数，在一个事务中写入租户、首个管理员成员和审计日志。完成后日常成员与角色变更全部走后台权限管理和审计日志。
+开通接口需要真实参数，在一个事务中写入租户、首个管理员成员和审计日志。自托管模式还会创建身份账号、首登改密和 MFA 要求；完成后日常成员与角色变更全部走后台权限管理和审计日志。

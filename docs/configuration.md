@@ -31,6 +31,8 @@
 | OIDC 身份 | `APP_JWT_ISSUER`、`OIDC_ISSUER_URI`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS` | 服务端令牌签发、第三方令牌校验和跨域白名单 |
 | 管理端登录 | `VITE_OIDC_AUTHORIZATION_ENDPOINT`、`VITE_OIDC_TOKEN_ENDPOINT`、`VITE_OIDC_CLIENT_ID`、`VITE_OIDC_REDIRECT_URI`、`VITE_OIDC_SCOPES` | 管理端 Authorization Code + PKCE；客户端必须是 public client，不保存 client secret |
 | 自托管身份 | `KEYCLOAK_*`、`PLATFORM_ADMIN_*`、`INITIAL_TENANT_ID` | Keycloak 镜像、独立数据库秘密、初始管理员和首个真实租户预留标识；秘密由 `init` 随机生成 |
+| 账号邀请 | `IDENTITY_INVITATION_REDIRECT_URI`、`IDENTITY_INVITATION_LIFESPAN_HOURS` | 邀请完成后的后台地址与邀请有效期；本机自动派生回环地址 |
+| 身份邮件 | `IDENTITY_EMAIL_ENABLED`、`IDENTITY_SMTP_*` | 启用后使用真实 SMTP 发送验证、首登改密和恢复邮件；密码只写入 Git 忽略的部署配置 |
 | 微信身份 | `WECHAT_IDENTITY_ENABLED`、`WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_TENANT_CODE` | 有真实小程序资质后启用 |
 | 微信通知 | `WECHAT_NOTIFICATION_ENABLED`、`WECHAT_NOTIFICATION_TEMPLATES_JSON` | 通知类型到微信订阅消息模板的映射；依赖微信身份配置 |
 | 微信支付 | `WECHAT_PAYMENT_ENABLED`、`WECHAT_PAYMENT_DIRECTORY`、`WECHAT_PRIMARY_MERCHANT_SERIAL`、`WECHAT_PRIMARY_API_V3_KEY`、`WECHAT_PRIMARY_PUBLIC_KEY_ID` | 密钥目录还必须包含 `merchant-private-key.pem` 和 `wechat-pay-public-key.pem` |
@@ -47,6 +49,8 @@
 - `VITE_OIDC_CLIENT_ID` 是在身份平台给管理端创建的 public client 标识，不是用户名，也不是 secret。
 
 `OIDC_JWK_SET_URI` 是容器网络内读取签名公钥的地址，用来解决浏览器访问地址与容器访问地址不同的问题。它不是账号或密钥。自托管模式自动生成；外部模式通常留空，由服务端通过 Issuer 发现公钥。
+
+默认不启用 SMTP，本机通过管理后台只显示一次随机临时密码。生产应运行 `config-manager.cmd wizard` 启用真实 SMTP；配置校验会同时要求主机、端口、已验证发件地址、用户名和密码。启动器会对已有 Keycloak 数据卷幂等补齐账号管理最小权限、`platform_admin`、MFA、密码策略和登录事件记录，因此升级不依赖重新删除数据库。
 
 ## 不放在部署文件里的业务配置
 

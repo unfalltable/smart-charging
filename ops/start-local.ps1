@@ -9,6 +9,7 @@ $workspace = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $PSScriptRoot 'compose.local.yaml'
 . (Join-Path $PSScriptRoot 'configuration.ps1')
 . (Join-Path $PSScriptRoot 'http-response.ps1')
+. (Join-Path $PSScriptRoot 'reconcile-bundled-identity.ps1')
 
 $configurationState = Initialize-DeploymentConfiguration -Workspace $workspace
 $environmentFile = $configurationState.Path
@@ -146,6 +147,10 @@ try {
         throw "Services did not become ready within $TimeoutSeconds seconds. Review the container logs above."
     }
 
+    if ($bundledIdentityEnabled) {
+        Sync-BundledIdentity -Configuration $configuration
+    }
+
     Write-Host ''
     Write-Host 'The production-mode charging platform is ready without seeding business data.' -ForegroundColor Green
     Write-Host "Admin console: http://127.0.0.1:$adminPort/"
@@ -154,7 +159,7 @@ try {
     if ($bundledIdentityEnabled) {
         Write-Host "Identity service: http://127.0.0.1:$keycloakPort/"
         Write-Host 'Initial login: run .\config-manager.cmd credentials' -ForegroundColor Yellow
-        Write-Host 'Before the first login, create your real tenant with .\ops\provision-tenant.ps1 -TenantCode <code> -TenantDisplayName <name>' -ForegroundColor Yellow
+        Write-Host 'Log in as the platform administrator, complete password/MFA setup, then create downstream tenants in Platform and Tenants.' -ForegroundColor Yellow
     }
     if ($deviceGatewayEnabled) {
         Write-Host 'Device gateway: enabled with the supplied TLS certificates.'

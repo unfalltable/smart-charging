@@ -4,7 +4,8 @@ $startScriptPath = Join-Path $workspace 'ops/start-local.ps1'
 $configurationScriptPath = Join-Path $workspace 'ops/configuration.ps1'
 $managerScriptPath = Join-Path $workspace 'ops/manage-config.ps1'
 $httpResponseScriptPath = Join-Path $workspace 'ops/http-response.ps1'
-foreach ($scriptPath in @($startScriptPath, $configurationScriptPath, $managerScriptPath, $httpResponseScriptPath)) {
+$identityReconciliationScriptPath = Join-Path $workspace 'ops/reconcile-bundled-identity.ps1'
+foreach ($scriptPath in @($startScriptPath, $configurationScriptPath, $managerScriptPath, $httpResponseScriptPath, $identityReconciliationScriptPath)) {
     $parserTokens = $null
     $parserErrors = $null
     [System.Management.Automation.Language.Parser]::ParseFile(
@@ -156,7 +157,8 @@ foreach ($relativePath in $forbiddenRuntimeFiles) {
 
 $runtimeSource = @(
     (Get-ChildItem -LiteralPath (Join-Path $workspace 'platform-core/src/main') -Recurse -File),
-    (Get-ChildItem -LiteralPath (Join-Path $workspace 'apps') -Recurse -File)
+    (Get-ChildItem -LiteralPath (Join-Path $workspace 'apps') -Recurse -File |
+        Where-Object { $_.FullName -notmatch '[\\/](node_modules|dist)[\\/]' })
 ) | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }
 $runtimeText = $runtimeSource -join [Environment]::NewLine
 foreach ($forbidden in @('LOCAL_SIMULATION', 'simulate-success',
@@ -209,6 +211,20 @@ try {
     $platformAdmin = @($realm.users | Where-Object { $_.username -eq $testState.Values['PLATFORM_ADMIN_USERNAME'] })[0]
     if ($null -eq $platformAdmin -or $platformAdmin.realmRoles -contains 'internal') {
         throw 'The human platform administrator must not receive the machine-only internal authority.'
+    }
+    if ($platformAdmin.realmRoles -notcontains 'platform_admin' -or
+            $platformAdmin.requiredActions -notcontains 'CONFIGURE_TOTP') {
+        throw 'The platform administrator must have an explicit platform role and mandatory MFA enrollment.'
+    }
+    $serviceAccount = @($realm.users | Where-Object {
+        $serviceClientProperty = $_.PSObject.Properties['serviceAccountClientId']
+        $null -ne $serviceClientProperty -and
+            [string]$serviceClientProperty.Value -eq [string]$testState.Values['KEYCLOAK_PROVISIONING_CLIENT_ID']
+    })[0]
+    if ($null -eq $serviceAccount -or
+            $serviceAccount.clientRoles.'realm-management' -notcontains 'manage-users' -or
+            $serviceAccount.clientRoles.'realm-management' -notcontains 'view-events') {
+        throw 'The account lifecycle service must receive only the required identity management roles.'
     }
     $realmText = Get-Content -LiteralPath $realmPath -Raw
     if ($realmText.Contains([string]$testState.Values['POSTGRES_PASSWORD']) -or

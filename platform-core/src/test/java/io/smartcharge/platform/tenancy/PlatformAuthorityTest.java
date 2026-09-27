@@ -31,6 +31,16 @@ class PlatformAuthorityTest {
         assertThat(authority.isPlatformAdministrator(authentication("platform-admin", true))).isFalse();
     }
 
+    @Test
+    void recognizesExplicitPlatformAuthorityForExternalIdentityProviders() {
+        PlatformAuthority authority = new PlatformAuthority("external", "");
+        JwtAuthenticationToken authentication = authentication("owner", false);
+        authentication = new JwtAuthenticationToken(authentication.getToken(),
+                List.of(new SimpleGrantedAuthority("SCOPE_platform_admin")), authentication.getName());
+
+        assertThat(authority.isPlatformAdministrator(authentication)).isTrue();
+    }
+
     static JwtAuthenticationToken authentication(String username, boolean admin) {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "none")

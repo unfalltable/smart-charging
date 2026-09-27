@@ -19,8 +19,11 @@ public final class PlatformAuthority {
     }
 
     public boolean isPlatformAdministrator(Authentication authentication) {
-        if (!"bundled".equals(identityProviderMode)
-                || !(authentication instanceof JwtAuthenticationToken jwt)
+        if (authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> "SCOPE_platform_admin".equals(authority.getAuthority()))) {
+            return true;
+        }
+        if (!"bundled".equals(identityProviderMode) || !(authentication instanceof JwtAuthenticationToken jwt)
                 || platformAdminUsername.isBlank()
                 || jwt.getToken().getSubject() == null
                 || jwt.getToken().getSubject().isBlank()) {
@@ -28,5 +31,12 @@ public final class PlatformAuthority {
         }
         String username = jwt.getToken().getClaimAsString("preferred_username");
         return platformAdminUsername.equals(username);
+    }
+
+    public void requirePlatformAdministrator(Authentication authentication) {
+        if (!isPlatformAdministrator(authentication)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Platform administrator authority is required");
+        }
     }
 }

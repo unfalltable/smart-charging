@@ -30,6 +30,7 @@ public final class TenantContextFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         return path.equals("/api/v1/session")
+                || path.startsWith("/api/v1/platform/")
                 || TENANT_FREE_PREFIXES.stream().anyMatch(path::startsWith);
     }
 

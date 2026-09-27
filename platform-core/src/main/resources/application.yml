@@ -52,6 +52,15 @@ charging:
     access-token-minutes: ${ACCESS_TOKEN_MINUTES:15}
     refresh-token-days: ${REFRESH_TOKEN_DAYS:30}
   identity:
+    admin:
+      base-uri: ${IDENTITY_ADMIN_BASE_URI:}
+      realm: ${IDENTITY_ADMIN_REALM:}
+      client-id: ${IDENTITY_ADMIN_CLIENT_ID:}
+      client-secret: ${IDENTITY_ADMIN_CLIENT_SECRET:}
+      web-client-id: ${IDENTITY_ADMIN_WEB_CLIENT_ID:}
+      invitation-redirect-uri: ${IDENTITY_INVITATION_REDIRECT_URI:}
+      email-delivery-enabled: ${IDENTITY_EMAIL_ENABLED:false}
+      invitation-lifespan-hours: ${IDENTITY_INVITATION_LIFESPAN_HOURS:48}
     wechat:
       enabled: ${WECHAT_IDENTITY_ENABLED:false}
       app-id: ${WECHAT_APP_ID:}

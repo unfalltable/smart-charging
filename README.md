@@ -11,7 +11,7 @@
 - 订单幂等、充电口并发锁、outbox/inbox、支付回调验签、主动查单和异常恢复。
 - Netty 设备网关，支持双向 TLS、HMAC、时间窗和 Valkey 分布式 nonce 防重放。
 - 微信小程序 code2Session 登录、访问令牌、刷新令牌轮换与复用检测。
-- 管理端 OIDC Authorization Code + PKCE、可选自托管 Keycloak、服务端权威租户会话、平台总管理员与下游租户角色分层、分布式限流和请求追踪。
+- 管理端 OIDC Authorization Code + PKCE、可选自托管 Keycloak、平台总管理员开通租户、租户管理员邀请员工、首登改密、高权限 MFA、邀请过期、密码/MFA 恢复、会话撤销与登录安全事件。
 - 微信支付 APIv3 官方 Java SDK、退款、订阅消息发送和外部秘密引用。
 - 设备密钥在线生成与轮换，AES-256-GCM 加密存入 Valkey。
 
@@ -35,14 +35,13 @@
 
 如果电脑以前运行过带固定试用数据的旧版本，启动脚本会拒绝沿用旧数据卷。确认旧数据不需要保留后执行 `.\docker-stop.cmd -DeleteData`，再重新启动，即可得到空库和全新的秘密。
 
-启动完成后，先创建自己的真实租户，再使用配置管理器明确读取一次初始登录信息：
+启动完成后，使用配置管理器明确读取一次初始平台总管理员登录信息：
 
 ```powershell
-.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName
 .\config-manager.cmd credentials
 ```
 
-自托管模式会用专用、最小权限的服务账号获取开通令牌，不需要把令牌写入配置文件。初始平台密码是临时密码，首次登录必须修改。若切换到外部 OIDC，开通脚本仍要求显式提供真实的 `INTERNAL_PROVISIONING_TOKEN`、管理员 subject 和显示名称。
+用临时密码登录后必须立即修改密码并绑定动态口令。平台总管理员进入“平台与租户”创建下游运营商及其首位租户管理员；租户管理员再进入“账号与权限”按岗位邀请员工。后台不开放匿名注册。未配置 SMTP 时，一次性临时密码只在创建或恢复响应中显示一次；配置真实 SMTP 后改为发送有时效的邀请和恢复邮件。`ops/provision-tenant.ps1` 仅保留给自动化或外部 OIDC 受控开通，不是日常初始化步骤。
 
 真实设备网关默认不启动。准备好设备协议适配器和 mTLS 证书后，通过配置向导启用；启动脚本会检查三份真实证书后才加载网关容器。
 

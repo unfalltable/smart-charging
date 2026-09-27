@@ -83,13 +83,23 @@ function Invoke-ConfigurationWizard {
     if ($bundledIdentity) {
         $Values['IDENTITY_PROVIDER_MODE'] = 'bundled'
         [void](Set-BundledIdentityConfiguration -Values $Values)
-        foreach ($name in @('PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME', 'PLATFORM_ADMIN_PASSWORD')) {
+        foreach ($name in @('PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME', 'PLATFORM_ADMIN_EMAIL', 'PLATFORM_ADMIN_PASSWORD')) {
             Set-ConfigurationValueInteractively -Values $Values -Name $name
+        }
+        $identityEmail = Read-YesNo -Prompt 'Send operator invitations and password recovery by SMTP' -CurrentValue (Get-ConfigurationBoolean -Values $Values -Name 'IDENTITY_EMAIL_ENABLED')
+        $Values['IDENTITY_EMAIL_ENABLED'] = $identityEmail.ToString().ToLowerInvariant()
+        if ($identityEmail) {
+            foreach ($name in @('IDENTITY_SMTP_HOST', 'IDENTITY_SMTP_PORT', 'IDENTITY_SMTP_FROM',
+                    'IDENTITY_SMTP_FROM_DISPLAY_NAME', 'IDENTITY_SMTP_USERNAME', 'IDENTITY_SMTP_PASSWORD',
+                    'IDENTITY_SMTP_STARTTLS', 'IDENTITY_INVITATION_LIFESPAN_HOURS')) {
+                Set-ConfigurationValueInteractively -Values $Values -Name $name
+            }
         }
         Write-Host 'Bundled OIDC endpoints are generated automatically. Use config-manager.cmd credentials when you need to view the initial login.' -ForegroundColor Yellow
     }
     else {
         $Values['IDENTITY_PROVIDER_MODE'] = 'external'
+        $Values['IDENTITY_EMAIL_ENABLED'] = 'false'
         foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'API_JWT_AUDIENCE', 'ALLOWED_ORIGINS', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_CLIENT_ID', 'VITE_OIDC_REDIRECT_URI', 'VITE_OIDC_SCOPES')) {
             Set-ConfigurationValueInteractively -Values $Values -Name $name
         }

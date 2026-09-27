@@ -20,7 +20,7 @@ class SecurityConfigurationTest {
                 .expiresAt(Instant.now().plusSeconds(60))
                 .claim("scope", "profile")
                 .claim("preferred_username", "platform-admin")
-                .claim("realm_access", Map.of("roles", List.of("admin", "operator", "invalid role")))
+                .claim("realm_access", Map.of("roles", List.of("platform_admin", "admin", "operator", "invalid role")))
                 .build();
 
         Converter<Jwt, AbstractAuthenticationToken> converter =
@@ -31,7 +31,7 @@ class SecurityConfigurationTest {
         assertThat(authentication).isNotNull();
         assertThat(authentication.getName()).isEqualTo("subject-id");
         assertThat(authentication.getAuthorities()).extracting("authority")
-                .contains("SCOPE_profile", "SCOPE_admin", "SCOPE_operator")
+                .contains("SCOPE_profile", "SCOPE_platform_admin", "SCOPE_admin", "SCOPE_operator")
                 .doesNotContain("SCOPE_invalid role", "SCOPE_internal");
     }
 

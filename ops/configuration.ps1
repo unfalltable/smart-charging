@@ -41,6 +41,16 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'VITE_OIDC_CLIENT_ID' 'Identity' $true $false '' '' 'Admin web OIDC public client ID'
     New-ConfigurationDefinition 'VITE_OIDC_REDIRECT_URI' 'Identity' $true $false 'http://127.0.0.1:8088/auth/callback' '' 'Admin web login callback URI'
     New-ConfigurationDefinition 'VITE_OIDC_SCOPES' 'Identity' $true $false 'openid' '' 'OIDC scopes requested by the admin web'
+    New-ConfigurationDefinition 'IDENTITY_INVITATION_REDIRECT_URI' 'Identity' $true $false 'http://127.0.0.1:8088/' '' 'Destination after an account invitation is completed'
+    New-ConfigurationDefinition 'IDENTITY_INVITATION_LIFESPAN_HOURS' 'Identity' $true $false '48' '' 'Account invitation validity in hours'
+    New-ConfigurationDefinition 'IDENTITY_EMAIL_ENABLED' 'Identity email' $true $false 'false' '' 'Send account invitations and recovery links by SMTP'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_HOST' 'Identity email' $false $false '' '' 'SMTP host used by the identity service'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_PORT' 'Identity email' $false $false '587' '' 'SMTP port used by the identity service'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_FROM' 'Identity email' $false $false '' '' 'Verified sender email address'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_FROM_DISPLAY_NAME' 'Identity email' $false $false 'Charging Operations' '' 'Invitation sender display name'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_USERNAME' 'Identity email' $false $false '' '' 'SMTP authentication username'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_PASSWORD' 'Identity email' $false $true '' '' 'SMTP authentication password'
+    New-ConfigurationDefinition 'IDENTITY_SMTP_STARTTLS' 'Identity email' $true $false 'true' '' 'Require STARTTLS for SMTP delivery'
 
     New-ConfigurationDefinition 'KEYCLOAK_IMAGE' 'Bundled identity' $true $false 'quay.io/keycloak/keycloak:26.7.4' '' 'Pinned official Keycloak container image'
     New-ConfigurationDefinition 'KEYCLOAK_PORT' 'Bundled identity' $true $false '19090' '' 'Bundled Keycloak HTTP port on loopback'
@@ -53,6 +63,7 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD' 'Bundled identity' $true $true '' 'Hex64' 'Keycloak bootstrap administration password'
     New-ConfigurationDefinition 'PLATFORM_ADMIN_USERNAME' 'Bundled identity' $true $false '' 'PlatformAdminUsername' 'Initial platform administrator username'
     New-ConfigurationDefinition 'PLATFORM_ADMIN_DISPLAY_NAME' 'Bundled identity' $true $false 'Platform Administrator' '' 'Initial platform administrator display name'
+    New-ConfigurationDefinition 'PLATFORM_ADMIN_EMAIL' 'Bundled identity' $false $false '' '' 'Initial platform administrator recovery email'
     New-ConfigurationDefinition 'PLATFORM_ADMIN_SUBJECT' 'Bundled identity' $true $false '' 'Uuid' 'Stable initial platform administrator subject'
     New-ConfigurationDefinition 'PLATFORM_ADMIN_PASSWORD' 'Bundled identity' $true $true '' 'Hex64' 'Initial platform administrator password'
     New-ConfigurationDefinition 'INITIAL_TENANT_ID' 'Bundled identity' $true $false '' 'Uuid' 'Reserved identifier for the first real tenant'
@@ -261,6 +272,7 @@ function Set-BundledIdentityConfiguration {
         VITE_OIDC_CLIENT_ID = [string]$Values['KEYCLOAK_CLIENT_ID']
         VITE_OIDC_REDIRECT_URI = "http://127.0.0.1:$adminPort/auth/callback"
         VITE_OIDC_SCOPES = 'openid'
+        IDENTITY_INVITATION_REDIRECT_URI = "http://127.0.0.1:$adminPort/"
     }
     $changed = $false
     foreach ($entry in $derived.GetEnumerator()) {
@@ -380,13 +392,13 @@ function Test-DeploymentConfiguration {
         $errors.Add('IDENTITY_PROVIDER_MODE: value must be bundled or external')
     }
 
-    foreach ($name in @('WECHAT_IDENTITY_ENABLED', 'WECHAT_NOTIFICATION_ENABLED', 'WECHAT_PAYMENT_ENABLED', 'DEVICE_GATEWAY_ENABLED')) {
+    foreach ($name in @('IDENTITY_EMAIL_ENABLED', 'IDENTITY_SMTP_STARTTLS', 'WECHAT_IDENTITY_ENABLED', 'WECHAT_NOTIFICATION_ENABLED', 'WECHAT_PAYMENT_ENABLED', 'DEVICE_GATEWAY_ENABLED')) {
         if ($Values.ContainsKey($name) -and @('true', 'false') -notcontains [string]$Values[$name]) {
             $errors.Add("$($name): value must be true or false")
         }
     }
 
-    foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_REDIRECT_URI')) {
+    foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_REDIRECT_URI', 'IDENTITY_INVITATION_REDIRECT_URI')) {
         if ($Values.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$Values[$name]) -and -not (Test-AbsoluteSecureUrl -Value ([string]$Values[$name]))) {
             $errors.Add("$($name): use an absolute HTTPS URL; HTTP is allowed only for loopback development")
         }
@@ -440,7 +452,7 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS')) {
+    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_INVITATION_LIFESPAN_HOURS')) {
         $number = 0
         if (-not [int]::TryParse([string]$Values[$name], [ref]$number) -or $number -lt 1) {
             $errors.Add("$($name): value must be a positive integer")
@@ -473,6 +485,22 @@ function Test-DeploymentConfiguration {
             if (-not [guid]::TryParse([string]$Values[$name], [ref]$identifier) -or $identifier -eq [guid]::Empty) {
                 $errors.Add("$($name): value must be a non-zero UUID")
             }
+        }
+    }
+
+    if (Get-ConfigurationBoolean -Values $Values -Name 'IDENTITY_EMAIL_ENABLED') {
+        foreach ($name in @('IDENTITY_SMTP_HOST', 'IDENTITY_SMTP_PORT', 'IDENTITY_SMTP_FROM',
+                'IDENTITY_SMTP_USERNAME', 'IDENTITY_SMTP_PASSWORD', 'PLATFORM_ADMIN_EMAIL')) {
+            if ([string]::IsNullOrWhiteSpace([string]$Values[$name])) {
+                $errors.Add("$($name): required when IDENTITY_EMAIL_ENABLED=true")
+            }
+        }
+        try { [void][System.Net.Mail.MailAddress]::new([string]$Values['PLATFORM_ADMIN_EMAIL']) }
+        catch { $errors.Add('PLATFORM_ADMIN_EMAIL: value must be a valid email address') }
+        $smtpPort = 0
+        if (-not [int]::TryParse([string]$Values['IDENTITY_SMTP_PORT'], [ref]$smtpPort) -or
+                $smtpPort -lt 1 -or $smtpPort -gt 65535) {
+            $errors.Add('IDENTITY_SMTP_PORT: port must be between 1 and 65535')
         }
     }
 
@@ -617,8 +645,15 @@ function Export-BundledIdentityConfiguration {
         return ''
     }
 
-    $roleNames = @('internal', 'admin', 'operator', 'finance', 'auditor', 'support')
-    $platformAdminRoleNames = @('admin', 'operator', 'finance', 'auditor', 'support')
+    $roleNames = @('internal', 'platform_admin', 'admin', 'operator', 'finance', 'auditor', 'support')
+    $platformAdminRoleNames = @('platform_admin', 'admin', 'operator', 'finance', 'auditor', 'support')
+    $emailDeliveryEnabled = Get-ConfigurationBoolean -Values $Values -Name 'IDENTITY_EMAIL_ENABLED'
+    $platformAdminEmail = [string]$Values['PLATFORM_ADMIN_EMAIL']
+    $platformAdminEmailValue = if ([string]::IsNullOrWhiteSpace($platformAdminEmail)) { $null } else { $platformAdminEmail }
+    $platformAdminRequiredActions = @('UPDATE_PASSWORD', 'CONFIGURE_TOTP')
+    if ($emailDeliveryEnabled -and -not [string]::IsNullOrWhiteSpace($platformAdminEmail)) {
+        $platformAdminRequiredActions += 'VERIFY_EMAIL'
+    }
     $realmRoles = @($roleNames | ForEach-Object {
         [ordered]@{ name = $_; description = "Smart Charging $($_) authority" }
     })
@@ -693,7 +728,7 @@ function Export-BundledIdentityConfiguration {
         verifyEmail = $false
         loginWithEmailAllowed = $false
         duplicateEmailsAllowed = $false
-        resetPasswordAllowed = $true
+        resetPasswordAllowed = $emailDeliveryEnabled
         editUsernameAllowed = $false
         bruteForceProtected = $true
         permanentLockout = $false
@@ -703,9 +738,18 @@ function Export-BundledIdentityConfiguration {
         quickLoginCheckMilliSeconds = 1000
         maxDeltaTimeSeconds = 43200
         failureFactor = 5
+        passwordPolicy = 'length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and passwordHistory(5)'
         accessTokenLifespan = 900
         ssoSessionIdleTimeout = 1800
         ssoSessionMaxLifespan = 36000
+        eventsEnabled = $true
+        eventsExpiration = 7776000
+        enabledEventTypes = @('LOGIN', 'LOGIN_ERROR', 'UPDATE_PASSWORD', 'UPDATE_TOTP', 'REMOVE_TOTP')
+        adminEventsEnabled = $true
+        adminEventsDetailsEnabled = $false
+        internationalizationEnabled = $true
+        supportedLocales = @('zh-CN', 'en')
+        defaultLocale = 'zh-CN'
         roles = [ordered]@{ realm = $realmRoles }
         clientScopes = @($platformScope)
         clients = @(
@@ -753,10 +797,11 @@ function Export-BundledIdentityConfiguration {
                 id = [string]$Values['PLATFORM_ADMIN_SUBJECT']
                 username = [string]$Values['PLATFORM_ADMIN_USERNAME']
                 enabled = $true
-                emailVerified = $true
+                email = $platformAdminEmailValue
+                emailVerified = $false
                 firstName = [string]$Values['PLATFORM_ADMIN_DISPLAY_NAME']
                 attributes = [ordered]@{ tenant_ids = @([string]$Values['INITIAL_TENANT_ID']) }
-                requiredActions = @('UPDATE_PASSWORD')
+                requiredActions = $platformAdminRequiredActions
                 credentials = @(
                     [ordered]@{
                         type = 'password'
@@ -771,8 +816,26 @@ function Export-BundledIdentityConfiguration {
                 enabled = $true
                 serviceAccountClientId = [string]$Values['KEYCLOAK_PROVISIONING_CLIENT_ID']
                 realmRoles = @('internal')
+                clientRoles = [ordered]@{
+                    'realm-management' = @('manage-users', 'view-users', 'query-users', 'view-events', 'view-realm')
+                }
             }
         )
+    }
+
+    if ($emailDeliveryEnabled) {
+        $startTlsValue = if (Get-ConfigurationBoolean -Values $Values -Name 'IDENTITY_SMTP_STARTTLS') { 'true' } else { 'false' }
+        $realm['smtpServer'] = [ordered]@{
+            host = [string]$Values['IDENTITY_SMTP_HOST']
+            port = [string]$Values['IDENTITY_SMTP_PORT']
+            from = [string]$Values['IDENTITY_SMTP_FROM']
+            fromDisplayName = [string]$Values['IDENTITY_SMTP_FROM_DISPLAY_NAME']
+            auth = 'true'
+            user = [string]$Values['IDENTITY_SMTP_USERNAME']
+            password = [string]$Values['IDENTITY_SMTP_PASSWORD']
+            starttls = $startTlsValue
+            ssl = 'false'
+        }
     }
 
     $directory = Resolve-ConfigurationDirectory -Workspace $Workspace -ConfiguredPath ([string]$Values['KEYCLOAK_IMPORT_DIRECTORY'])
