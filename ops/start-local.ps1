@@ -101,7 +101,16 @@ try {
     }
 
     & docker @compose up --detach --no-build --remove-orphans
-    if ($LASTEXITCODE -ne 0) { throw 'Docker Compose startup failed.' }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ''
+        Write-Warning 'Docker Compose could not satisfy a service dependency. Container status and core diagnostics follow.'
+        & docker @compose ps --all
+        & docker @compose logs --no-color --tail 160 core
+        if ($bundledIdentityEnabled) {
+            & docker @compose logs --no-color --tail 60 keycloak
+        }
+        throw 'Docker Compose startup failed. Review the first ERROR or Caused by entry in the diagnostics above.'
+    }
 
     $adminPort = [string]$configuration['ADMIN_WEB_PORT']
     $corePort = [string]$configuration['CORE_PORT']

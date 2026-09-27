@@ -73,6 +73,9 @@ if ($startScript -notmatch "image inspect 'smart-charging-local-keycloak:latest'
         $startScript -match 'up --detach --build') {
     throw 'Startup must reuse the optimized local Keycloak image instead of contacting its registry on every run.'
 }
+if ($startScript -notmatch 'logs --no-color --tail 160 core') {
+    throw 'Startup must print core diagnostics when a service dependency fails.'
+}
 if ($configurationScript -notmatch 'PILOT_DEVICE_SECRET') {
     throw 'Unified configuration must reject legacy demo configuration.'
 }
