@@ -68,8 +68,10 @@ try {
     $buildServices = @('core', 'admin-web')
     if ($deviceGatewayEnabled) { $buildServices += 'device-gateway' }
     if ($bundledIdentityEnabled) {
-        & docker image inspect 'smart-charging-local-keycloak:latest' --format '{{.Id}}' 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $keycloakImageId = @(& docker image ls --quiet --filter 'reference=smart-charging-local-keycloak:latest') |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Select-Object -First 1
+        if ([string]::IsNullOrWhiteSpace([string]$keycloakImageId)) {
             $existingKeycloakContainer = @(& docker @compose ps --all --quiet keycloak 2>$null) |
                 Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
                 Select-Object -First 1
@@ -83,8 +85,10 @@ try {
                 }
             }
         }
-        & docker image inspect 'smart-charging-local-keycloak:latest' --format '{{.Id}}' 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $keycloakImageId = @(& docker image ls --quiet --filter 'reference=smart-charging-local-keycloak:latest') |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Select-Object -First 1
+        if ([string]::IsNullOrWhiteSpace([string]$keycloakImageId)) {
             $buildServices += 'keycloak'
             Write-Host 'No optimized local Keycloak image was found; building it once.' -ForegroundColor Yellow
         }

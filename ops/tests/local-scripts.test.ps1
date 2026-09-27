@@ -66,7 +66,8 @@ if (($startScript -notmatch 'without seeding business data') -or
         ($startScript -notmatch 'Startup did not create any tenant, station, device, tariff, order or payment data')) {
     throw 'Startup output must explicitly confirm that no business records were seeded.'
 }
-if ($startScript -notmatch "image inspect 'smart-charging-local-keycloak:latest'" -or
+if ($startScript -notmatch "image ls --quiet --filter 'reference=smart-charging-local-keycloak:latest'" -or
+        $startScript -match "image inspect 'smart-charging-local-keycloak:latest'" -or
         $startScript -notmatch 'docker @compose ps --all --quiet keycloak' -or
         $startScript -notmatch "docker image tag .*'smart-charging-local-keycloak:latest'" -or
         $startScript -notmatch 'up --detach --no-build' -or
