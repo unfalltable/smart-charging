@@ -63,7 +63,7 @@ final class WeChatPaymentGateway implements PaymentGateway {
             throw new DomainException("Customer has no WeChat payment identity");
         }
         if (payment.amountMinor() > Integer.MAX_VALUE) throw new DomainException("Payment amount exceeds channel limit");
-        Client client = client(payment.tenantId());
+        Client client = client(payment.tenantId(), payment.merchantChannelId());
         PrepayRequest request = new PrepayRequest();
         request.setAppid(client.channel().applicationId());
         request.setMchid(client.channel().merchantId());
@@ -92,7 +92,7 @@ final class WeChatPaymentGateway implements PaymentGateway {
 
     @Override
     public GatewayRefund createRefund(GatewayRefundRequest refund) {
-        Client client = client(refund.tenantId());
+        Client client = client(refund.tenantId(), refund.merchantChannelId());
         CreateRequest request = new CreateRequest();
         request.setTransactionId(refund.providerTransactionNo());
         request.setOutRefundNo(refund.merchantRefundNo());
@@ -108,8 +108,8 @@ final class WeChatPaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public GatewayPaymentStatus queryPayment(UUID tenantId, String merchantOrderNo) {
-        Client client = client(tenantId);
+    public GatewayPaymentStatus queryPayment(UUID tenantId, UUID merchantChannelId, String merchantOrderNo) {
+        Client client = client(tenantId, merchantChannelId);
         QueryOrderByOutTradeNoRequest request = new QueryOrderByOutTradeNoRequest();
         request.setMchid(client.channel().merchantId());
         request.setOutTradeNo(merchantOrderNo);
@@ -125,8 +125,8 @@ final class WeChatPaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public GatewayRefundStatus queryRefund(UUID tenantId, String merchantRefundNo) {
-        Client client = client(tenantId);
+    public GatewayRefundStatus queryRefund(UUID tenantId, UUID merchantChannelId, String merchantRefundNo) {
+        Client client = client(tenantId, merchantChannelId);
         QueryByOutRefundNoRequest request = new QueryByOutRefundNoRequest();
         request.setOutRefundNo(merchantRefundNo);
         Refund refund = client.refunds().queryByOutRefundNo(request);
@@ -141,8 +141,9 @@ final class WeChatPaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public VerifiedCallback verifyCallback(UUID tenantId, Map<String, String> headers, String body) {
-        Client client = client(tenantId);
+    public VerifiedCallback verifyCallback(UUID tenantId, UUID merchantChannelId,
+                                           Map<String, String> headers, String body) {
+        Client client = client(tenantId, merchantChannelId);
         Transaction transaction = client.parser().parse(request(headers, body), Transaction.class);
         if (!client.channel().merchantId().equals(transaction.getMchid())
                 || !client.channel().applicationId().equals(transaction.getAppid())) {
@@ -154,8 +155,9 @@ final class WeChatPaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public VerifiedRefundCallback verifyRefundCallback(UUID tenantId, Map<String, String> headers, String body) {
-        Client client = client(tenantId);
+    public VerifiedRefundCallback verifyRefundCallback(UUID tenantId, UUID merchantChannelId,
+                                                       Map<String, String> headers, String body) {
+        Client client = client(tenantId, merchantChannelId);
         RefundNotification refund = client.parser().parse(request(headers, body), RefundNotification.class);
         return new VerifiedRefundCallback(eventId(headers, body), refund.getOutRefundNo(), refund.getRefundId(),
                 refund.getAmount().getRefund(), refund.getRefundStatus() == Status.SUCCESS, body);
@@ -163,7 +165,7 @@ final class WeChatPaymentGateway implements PaymentGateway {
 
     @Override
     public void registerProfitSharingReceiver(ProfitSharingReceiver receiver) {
-        Client client = client(receiver.tenantId());
+        Client client = client(receiver.tenantId(), receiver.merchantChannelId());
         AddReceiverRequest request = new AddReceiverRequest();
         request.setAppid(client.channel().applicationId());
         request.setType(ReceiverType.MERCHANT_ID);
@@ -176,7 +178,7 @@ final class WeChatPaymentGateway implements PaymentGateway {
 
     @Override
     public GatewayProfitSharing createProfitSharing(GatewayProfitSharingRequest sharing) {
-        Client client = client(sharing.tenantId());
+        Client client = client(sharing.tenantId(), sharing.merchantChannelId());
         CreateOrderRequest request = new CreateOrderRequest();
         request.setAppid(client.channel().applicationId());
         request.setTransactionId(sharing.providerTransactionNo());
@@ -195,9 +197,10 @@ final class WeChatPaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public GatewayProfitSharing queryProfitSharing(UUID tenantId, String providerTransactionNo,
+    public GatewayProfitSharing queryProfitSharing(UUID tenantId, UUID merchantChannelId,
+                                                    String providerTransactionNo,
                                                     String outOrderNo) {
-        Client client = client(tenantId);
+        Client client = client(tenantId, merchantChannelId);
         QueryOrderRequest request = new QueryOrderRequest();
         request.setTransactionId(providerTransactionNo);
         request.setOutOrderNo(outOrderNo);
@@ -206,7 +209,7 @@ final class WeChatPaymentGateway implements PaymentGateway {
 
     @Override
     public GatewayProfitSharingReturn returnProfitSharing(GatewayProfitSharingReturnRequest returning) {
-        Client client = client(returning.tenantId());
+        Client client = client(returning.tenantId(), returning.merchantChannelId());
         CreateReturnOrderRequest request = new CreateReturnOrderRequest();
         request.setOrderId(returning.providerOrderNo());
         request.setOutOrderNo(returning.outOrderNo());
@@ -238,8 +241,9 @@ final class WeChatPaymentGateway implements PaymentGateway {
         return new GatewayProfitSharing(order.getOrderId(), state, receivers);
     }
 
-    private Client client(UUID tenantId) {
-        MerchantChannelRepository.Configuration channel = channels.requireActive(tenantId, "WECHAT");
+    private Client client(UUID tenantId, UUID merchantChannelId) {
+        MerchantChannelRepository.Configuration channel = channels.requireById(
+                tenantId, merchantChannelId, "WECHAT");
         Client existing = clients.get(channel.id());
         if (existing != null && existing.channel().version() == channel.version()) return existing;
         EnvironmentSecretMaterialProvider.WeChatMaterial material = secrets.weChat(channel.secretReference());

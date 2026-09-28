@@ -7,13 +7,13 @@
 - 已认证微信小程序的 AppID、AppSecret、合法请求域名与隐私协议版本。
 - 微信支付商户号、商户 API 私钥及序列号、APIv3 密钥、微信支付公钥及公钥 ID。
 - 已开通微信支付分账能力及支付机构批准的最大分账比例；平台、加盟商和合作方的已审核商户号、法定名称、与直接收款商户的真实关系。系统生产链路只接受商户号接收方，不接受个人 OpenID 或普通个人收款码。
-- 支付与退款 HTTPS 回调域名；数据库中回调地址分别使用
-  `/api/v1/public/payments/WECHAT/{tenantCode}/callback` 和
-  `/api/v1/public/refunds/WECHAT/{tenantCode}/callback`。
+- 支付与退款 HTTPS 回调域名；每个组织商户通道的数据库回调地址分别使用
+  `/api/v1/public/payments/WECHAT/{tenantCode}/{merchantId}/callback` 和
+  `/api/v1/public/refunds/WECHAT/{tenantCode}/{merchantId}/callback`，服务端据此选择该商户独立的验签和解密密钥。
 - 订阅消息模板编号和字段名。代码已包含用户授权、access token 缓存、模板字段映射、失败重试和发送器；
   未取得模板资质时保持 `WECHAT_NOTIFICATION_ENABLED=false`，通知 outbox 会保留。
 
-直接收款商户及每一个分账接收方都必须先完成微信支付侧的签约/审核。把支付机构批准的比例上限写入 `PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS`，再在管理后台按订单归属组织配置各接收方比例。该配置只约束资金路由；合同、发票和税务处理仍需按各经营主体实际业务确定。
+每个需要直接收款的场站归属组织，以及每一个分账接收方，都必须先完成微信支付侧的签约/审核。把支付机构批准的比例上限写入 `PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS`，先给组织配置直接收款通道，再针对该通道登记上游接收方并配置比例。该配置只约束资金路由；合同、发票和税务处理仍需按各经营主体实际业务确定。
 
 取得模板后，将小程序端的 `notificationTemplateIds` 填入模板 ID，并把服务端映射配置为类似：
 

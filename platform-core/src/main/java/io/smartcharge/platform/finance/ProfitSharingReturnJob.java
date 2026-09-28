@@ -61,7 +61,7 @@ final class ProfitSharingReturnJob {
         return tenantJdbc.readWriteAs(tenantId, () -> {
             ReturnOrder order = jdbc.query("""
                     select r.id, r.out_return_no, r.receiver_account, r.amount_minor,
-                           s.channel, s.provider_order_no, s.out_order_no,
+                           s.merchant_channel_id, s.channel, s.provider_order_no, s.out_order_no,
                            d.owner_type, d.organization_id, p.currency
                       from payment_profit_sharing_return r
                       join payment_profit_sharing_order s
@@ -79,7 +79,8 @@ final class ProfitSharingReturnJob {
                     """, (result, row) -> new ReturnOrder(
                     result.getObject("id", UUID.class), result.getString("out_return_no"),
                     result.getString("receiver_account"), result.getLong("amount_minor"),
-                    result.getString("channel"), result.getString("provider_order_no"),
+                    result.getObject("merchant_channel_id", UUID.class), result.getString("channel"),
+                    result.getString("provider_order_no"),
                     result.getString("out_order_no"), result.getString("owner_type"),
                     result.getObject("organization_id", UUID.class), result.getString("currency")),
                     tenantId).stream().findFirst().orElse(null);
@@ -98,7 +99,8 @@ final class ProfitSharingReturnJob {
         try {
             PaymentGateway.GatewayProfitSharingReturn result = gateways.required(order.channel())
                     .returnProfitSharing(new PaymentGateway.GatewayProfitSharingReturnRequest(
-                            tenantId, order.providerOrderNo(), order.outOrderNo(), order.outReturnNo(),
+                            tenantId, order.merchantChannelId(), order.providerOrderNo(),
+                            order.outOrderNo(), order.outReturnNo(),
                             order.receiverAccount(), order.amountMinor(), "用户订单退款分账回退"));
             tenantJdbc.readWriteAs(tenantId, () -> {
                 String status = switch (result.state()) {
@@ -181,7 +183,8 @@ final class ProfitSharingReturnJob {
     }
 
     private record ReturnOrder(UUID id, String outReturnNo, String receiverAccount,
-                               long amountMinor, String channel, String providerOrderNo,
+                               long amountMinor, UUID merchantChannelId,
+                               String channel, String providerOrderNo,
                                String outOrderNo, String ownerType, UUID organizationId,
                                String currency) { }
 }

@@ -26,13 +26,16 @@ final class RefundCallbackService {
         this.profitSharingReturns = profitSharingReturns;
     }
 
-    void process(String channel, String tenantCode, Map<String, String> headers, String body) {
+    void process(String channel, String tenantCode, String merchantId,
+                 Map<String, String> headers, String body) {
         UUID tenantId = resolveTenant(tenantCode);
+        UUID merchantChannelId = resolveMerchantChannel(tenantId, channel, merchantId);
         PaymentGateway.VerifiedRefundCallback callback = gateways.required(channel)
-                .verifyRefundCallback(tenantId, headers, body);
+                .verifyRefundCallback(tenantId, merchantChannelId, headers, body);
         tenantJdbc.readWriteAs(tenantId, () -> {
             RefundRecord refund = jdbc.query("""
-                    select r.id, r.payment_id, p.order_id, p.channel, p.currency, r.amount_minor, r.status,
+                    select r.id, r.payment_id, p.order_id, p.merchant_channel_id,
+                           p.channel, p.currency, r.amount_minor, r.status,
                            (select ci.provider_subject from charging_order o
                              join customer_identity ci on ci.tenant_id=o.tenant_id and ci.customer_id=o.customer_id
                             where o.tenant_id=p.tenant_id and o.id=p.order_id and ci.provider=p.channel
@@ -43,11 +46,15 @@ final class RefundCallbackService {
                     """, (result, row) -> new RefundRecord(
                     result.getObject("id", UUID.class), result.getObject("payment_id", UUID.class),
                     result.getObject("order_id", UUID.class), result.getString("channel"),
-                    result.getString("currency"), result.getLong("amount_minor"), result.getString("status"),
+                    result.getObject("merchant_channel_id", UUID.class), result.getString("currency"),
+                    result.getLong("amount_minor"), result.getString("status"),
                     result.getString("recipient")),
                     tenantId, callback.merchantRefundNo()).stream().findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("Unknown merchant refund"));
             if (!channel.equals(refund.channel())) throw new DomainException("Refund callback channel mismatch");
+            if (!merchantChannelId.equals(refund.merchantChannelId())) {
+                throw new DomainException("Refund callback merchant route mismatch");
+            }
             int inserted = jdbc.update("""
                     insert into payment_webhook
                         (id, tenant_id, payment_id, channel, provider_event_id, signature_valid, payload, processed_at)
@@ -110,7 +117,8 @@ final class RefundCallbackService {
 
     private RefundRecord lockById(UUID tenantId, UUID refundId) {
         return jdbc.query("""
-                select r.id, r.payment_id, p.order_id, p.channel, p.currency, r.amount_minor, r.status,
+                select r.id, r.payment_id, p.order_id, p.merchant_channel_id,
+                       p.channel, p.currency, r.amount_minor, r.status,
                        (select ci.provider_subject from charging_order o
                          join customer_identity ci on ci.tenant_id=o.tenant_id and ci.customer_id=o.customer_id
                         where o.tenant_id=p.tenant_id and o.id=p.order_id and ci.provider=p.channel
@@ -121,7 +129,8 @@ final class RefundCallbackService {
                 """, (result, row) -> new RefundRecord(
                 result.getObject("id", UUID.class), result.getObject("payment_id", UUID.class),
                 result.getObject("order_id", UUID.class), result.getString("channel"),
-                result.getString("currency"), result.getLong("amount_minor"), result.getString("status"),
+                result.getObject("merchant_channel_id", UUID.class), result.getString("currency"),
+                result.getLong("amount_minor"), result.getString("status"),
                 result.getString("recipient")), tenantId, refundId).stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown refund"));
     }
@@ -157,6 +166,19 @@ final class RefundCallbackService {
                 .orElseThrow(() -> new IllegalArgumentException("Unknown tenant callback route"));
     }
 
+    private UUID resolveMerchantChannel(UUID tenantId, String channel, String merchantId) {
+        if (merchantId == null || !merchantId.matches("[A-Za-z0-9_-]{3,128}")) {
+            throw new IllegalArgumentException("Invalid merchant callback route");
+        }
+        return jdbc.query("""
+                select id from merchant_channel
+                 where tenant_id=? and channel=? and merchant_id=? and status='ACTIVE'
+                """, (result, row) -> result.getObject(1, UUID.class),
+                tenantId, channel, merchantId).stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unknown merchant callback route"));
+    }
+
     private record RefundRecord(UUID id, UUID paymentId, UUID orderId, String channel,
+                                UUID merchantChannelId,
                                 String currency, long amountMinor, String status, String recipient) { }
 }

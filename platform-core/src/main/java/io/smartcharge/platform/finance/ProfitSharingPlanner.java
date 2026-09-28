@@ -25,12 +25,9 @@ final class ProfitSharingPlanner {
         this.maximumBasisPoints = maximumBasisPoints;
     }
 
-    boolean createPlan(UUID tenantId, UUID paymentId, UUID sourceOrganizationId,
-                       String channel, long paymentAmountMinor) {
-        boolean required = Boolean.TRUE.equals(jdbc.queryForObject("""
-                select profit_sharing_required from merchant_channel
-                 where tenant_id=? and channel=? and status='ACTIVE'
-                """, Boolean.class, tenantId, channel));
+    boolean createPlan(UUID tenantId, UUID merchantChannelId, UUID paymentId,
+                       UUID sourceOrganizationId, String channel, long paymentAmountMinor,
+                       boolean required) {
         LocalDate businessDate = LocalDate.now(BUSINESS_ZONE);
         List<Policy> policies = jdbc.query("""
                 select p.receiver_id, p.basis_points, r.owner_type, r.organization_id,
@@ -39,6 +36,7 @@ final class ProfitSharingPlanner {
                   join profit_sharing_receiver r
                     on r.tenant_id=p.tenant_id and r.id=p.receiver_id and r.status='ACTIVE'
                  where p.tenant_id=? and p.source_organization_id=? and r.channel=?
+                   and r.merchant_channel_id=?
                    and p.status='ACTIVE' and p.effective_from<=?
                    and (p.effective_until is null or p.effective_until>=?)
                  order by r.owner_type, r.receiver_account
@@ -47,7 +45,7 @@ final class ProfitSharingPlanner {
                 result.getString("owner_type"), result.getObject("organization_id", UUID.class),
                 result.getString("receiver_type"), result.getString("receiver_account"),
                 result.getString("receiver_name")),
-                tenantId, sourceOrganizationId, channel, businessDate, businessDate);
+                tenantId, sourceOrganizationId, channel, merchantChannelId, businessDate, businessDate);
         if (policies.isEmpty()) {
             if (required) throw new DomainException(
                     "Official provider profit sharing is required, but this station organization has no active policy");
@@ -70,9 +68,11 @@ final class ProfitSharingPlanner {
         long sharedAmount = allocations.stream().mapToLong(Allocation::amountMinor).sum();
         jdbc.update("""
                 insert into payment_profit_sharing_order
-                    (id, tenant_id, payment_id, channel, out_order_no, amount_minor, status)
-                values (?, ?, ?, ?, ?, ?, 'PLANNED')
-                """, orderId, tenantId, paymentId, channel, outOrderNo, sharedAmount);
+                    (id, tenant_id, payment_id, merchant_channel_id, channel,
+                     out_order_no, amount_minor, status)
+                values (?, ?, ?, ?, ?, ?, ?, 'PLANNED')
+                """, orderId, tenantId, paymentId, merchantChannelId,
+                channel, outOrderNo, sharedAmount);
         for (Allocation allocation : allocations) {
             Policy policy = allocation.policy();
             jdbc.update("""

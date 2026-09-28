@@ -32,17 +32,19 @@ final class PaymentController {
         return payments.create(idempotencyKey, request.orderId(), request.channel());
     }
 
-    @PostMapping("/public/payments/{channel}/{tenantCode}/callback")
+    @PostMapping("/public/payments/{channel}/{tenantCode}/{merchantId}/callback")
     void callback(@PathVariable String channel, @PathVariable String tenantCode,
+                  @PathVariable String merchantId,
                   @RequestHeader Map<String, String> headers,
                   @RequestBody String body) {
-        payments.processCallback(channel.toUpperCase(), tenantCode, headers, body);
+        payments.processCallback(channel.toUpperCase(), tenantCode, merchantId, headers, body);
     }
 
-    @PostMapping("/public/refunds/{channel}/{tenantCode}/callback")
+    @PostMapping("/public/refunds/{channel}/{tenantCode}/{merchantId}/callback")
     void refundCallback(@PathVariable String channel, @PathVariable String tenantCode,
+                        @PathVariable String merchantId,
                         @RequestHeader Map<String, String> headers, @RequestBody String body) {
-        refunds.process(channel.toUpperCase(), tenantCode, headers, body);
+        refunds.process(channel.toUpperCase(), tenantCode, merchantId, headers, body);
     }
 
     record CreatePaymentRequest(@NotNull UUID orderId, @NotBlank String channel) { }

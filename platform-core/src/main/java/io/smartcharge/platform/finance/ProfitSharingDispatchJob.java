@@ -43,7 +43,7 @@ final class ProfitSharingDispatchJob {
     private SharingOrder claim(UUID tenantId) {
         return tenantJdbc.readWriteAs(tenantId, () -> {
             SharingOrder order = jdbc.query("""
-                    select s.id, s.channel, s.out_order_no, s.provider_order_no,
+                    select s.id, s.merchant_channel_id, s.channel, s.out_order_no, s.provider_order_no,
                            p.provider_transaction_no
                       from payment_profit_sharing_order s
                       join payment_transaction p on p.tenant_id=s.tenant_id and p.id=s.payment_id
@@ -53,7 +53,8 @@ final class ProfitSharingDispatchJob {
                      order by s.next_attempt_at, s.created_at
                      for update of s skip locked limit 1
                     """, (result, row) -> new SharingOrder(
-                    result.getObject("id", UUID.class), result.getString("channel"),
+                    result.getObject("id", UUID.class),
+                    result.getObject("merchant_channel_id", UUID.class), result.getString("channel"),
                     result.getString("out_order_no"), result.getString("provider_order_no"),
                     result.getString("provider_transaction_no")), tenantId).stream().findFirst().orElse(null);
             if (order == null) return null;
@@ -72,8 +73,10 @@ final class ProfitSharingDispatchJob {
             PaymentGateway gateway = gateways.required(order.channel());
             PaymentGateway.GatewayProfitSharing result = order.providerOrderNo() == null
                     ? gateway.createProfitSharing(new PaymentGateway.GatewayProfitSharingRequest(
-                    tenantId, order.providerTransactionNo(), order.outOrderNo(), allocations(tenantId, order.id())))
-                    : gateway.queryProfitSharing(tenantId, order.providerTransactionNo(), order.outOrderNo());
+                    tenantId, order.merchantChannelId(), order.providerTransactionNo(), order.outOrderNo(),
+                    allocations(tenantId, order.id())))
+                    : gateway.queryProfitSharing(tenantId, order.merchantChannelId(),
+                    order.providerTransactionNo(), order.outOrderNo());
             apply(tenantId, order, result);
         } catch (RuntimeException failure) {
             tenantJdbc.readWriteAs(tenantId, () -> {
@@ -217,7 +220,7 @@ final class ProfitSharingDispatchJob {
                 : message.substring(0, Math.min(message.length(), 500));
     }
 
-    private record SharingOrder(UUID id, String channel, String outOrderNo,
+    private record SharingOrder(UUID id, UUID merchantChannelId, String channel, String outOrderNo,
                                 String providerOrderNo, String providerTransactionNo) { }
     private record Distribution(UUID id, String ownerType, UUID organizationId,
                                 long amountMinor, String channel, String currency) { }

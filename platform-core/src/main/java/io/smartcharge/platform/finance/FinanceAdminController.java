@@ -17,6 +17,7 @@ import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,11 +59,16 @@ final class FinanceAdminController {
     List<MerchantChannelView> merchantChannels() {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> jdbc.query("""
-                select id, channel, merchant_id, application_id, secret_reference, notify_url,
-                       refund_notify_url, profit_sharing_required, status, version
-                  from merchant_channel where tenant_id=? order by channel, merchant_id
+                select mc.id, mc.organization_id, o.name organization_name, mc.channel,
+                       mc.merchant_id, mc.application_id, mc.secret_reference, mc.notify_url,
+                       mc.refund_notify_url, mc.profit_sharing_required, mc.status, mc.version
+                  from merchant_channel mc
+                  join operator_organization o
+                    on o.tenant_id=mc.tenant_id and o.id=mc.organization_id
+                 where mc.tenant_id=? order by o.hierarchy_level, o.name, mc.channel
                 """, (result, row) -> new MerchantChannelView(
-                    result.getObject("id", UUID.class), result.getString("channel"),
+                    result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                    result.getString("organization_name"), result.getString("channel"),
                     result.getString("merchant_id"), result.getString("application_id"),
                     result.getString("secret_reference"), result.getString("notify_url"),
                     result.getString("refund_notify_url"), result.getBoolean("profit_sharing_required"),
@@ -81,16 +87,24 @@ final class FinanceAdminController {
         }
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
+            requireActiveOrganization(tenantId, request.organizationId());
+            validateCallbackRoutes(tenantId, request.channel(), request.merchantId(),
+                    request.notifyUrl(), request.refundNotifyUrl());
             UUID id = UUID.randomUUID();
             jdbc.update("""
                     insert into merchant_channel
-                        (id, tenant_id, channel, merchant_id, application_id, secret_reference,
+                        (id, tenant_id, organization_id, channel, merchant_id, application_id, secret_reference,
                          notify_url, refund_notify_url, profit_sharing_required, status)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, id, tenantId, request.channel(), request.merchantId(), request.applicationId(),
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, id, tenantId, request.organizationId(), request.channel(),
+                    request.merchantId(), request.applicationId(),
                     request.secretReference(), request.notifyUrl(), request.refundNotifyUrl(),
                     request.profitSharingRequired(), request.status());
-            MerchantChannelView view = new MerchantChannelView(id, request.channel(), request.merchantId(),
+            String organizationName = jdbc.queryForObject(
+                    "select name from operator_organization where tenant_id=? and id=?",
+                    String.class, tenantId, request.organizationId());
+            MerchantChannelView view = new MerchantChannelView(id, request.organizationId(), organizationName,
+                    request.channel(), request.merchantId(),
                     request.applicationId(), request.secretReference(), request.notifyUrl(),
                     request.refundNotifyUrl(), request.profitSharingRequired(), request.status(), 0);
             audit.record("MERCHANT_CHANNEL_CREATED", "merchant_channel", id, null, view);
@@ -107,6 +121,8 @@ final class FinanceAdminController {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
             MerchantChannelView before = merchantChannel(tenantId, channelId);
+            validateCallbackRoutes(tenantId, before.channel(), before.merchantId(),
+                    request.notifyUrl(), request.refundNotifyUrl());
             int changed = jdbc.update("""
                     update merchant_channel
                        set secret_reference=?, notify_url=?, refund_notify_url=?,
@@ -205,7 +221,8 @@ final class FinanceAdminController {
         RefundSeed seed = tenantJdbc.readWrite(() -> prepareRefund(tenantId, request));
         try {
             PaymentGateway.GatewayRefund gatewayRefund = gateways.required(seed.channel()).createRefund(
-                    new PaymentGateway.GatewayRefundRequest(tenantId, seed.id(), seed.merchantRefundNo(),
+                    new PaymentGateway.GatewayRefundRequest(tenantId, seed.merchantChannelId(),
+                            seed.id(), seed.merchantRefundNo(),
                             seed.providerTransactionNo(), seed.amountMinor(), seed.originalPaymentAmountMinor(),
                             seed.currency(), seed.reason()));
             tenantJdbc.readWrite(() -> {
@@ -519,11 +536,13 @@ final class FinanceAdminController {
 
     private RefundSeed prepareRefund(UUID tenantId, CreateRefundRequest request) {
         PaymentForRefund payment = jdbc.query("""
-                select id, order_id, channel, provider_transaction_no, amount_minor, currency
+                select id, order_id, merchant_channel_id, channel,
+                       provider_transaction_no, amount_minor, currency
                   from payment_transaction where tenant_id=? and id=? and status='SUCCEEDED' for update
                 """, (result, row) -> new PaymentForRefund(
                 result.getObject("id", UUID.class), result.getObject("order_id", UUID.class),
-                result.getString("channel"), result.getString("provider_transaction_no"),
+                result.getObject("merchant_channel_id", UUID.class), result.getString("channel"),
+                result.getString("provider_transaction_no"),
                 result.getLong("amount_minor"), result.getString("currency")), tenantId, request.paymentId())
                 .stream().findFirst().orElseThrow(() -> new DomainException("Only a successful payment can be refunded"));
         boolean invoiceBlocksRefund = Boolean.TRUE.equals(jdbc.queryForObject("""
@@ -548,7 +567,7 @@ final class FinanceAdminController {
                 values (?, ?, ?, ?, ?, 'CREATED', ?)
                 """, id, tenantId, payment.id(), number, request.amountMinor(), request.reason());
         audit.record("REFUND_CREATED", "refund_transaction", id, null, request);
-        return new RefundSeed(id, payment.id(), payment.orderId(), number, payment.channel(),
+        return new RefundSeed(id, payment.id(), payment.orderId(), number, payment.merchantChannelId(), payment.channel(),
                 payment.providerTransactionNo(), request.amountMinor(), payment.amountMinor(),
                 payment.currency(), request.reason());
     }
@@ -585,16 +604,41 @@ final class FinanceAdminController {
 
     private MerchantChannelView merchantChannel(UUID tenantId, UUID channelId) {
         return jdbc.query("""
-                select id, channel, merchant_id, application_id, secret_reference, notify_url,
-                       refund_notify_url, profit_sharing_required, status, version
-                  from merchant_channel where tenant_id=? and id=?
+                select mc.id, mc.organization_id, o.name organization_name, mc.channel,
+                       mc.merchant_id, mc.application_id, mc.secret_reference, mc.notify_url,
+                       mc.refund_notify_url, mc.profit_sharing_required, mc.status, mc.version
+                  from merchant_channel mc
+                  join operator_organization o
+                    on o.tenant_id=mc.tenant_id and o.id=mc.organization_id
+                 where mc.tenant_id=? and mc.id=?
                 """, (result, row) -> new MerchantChannelView(
-                result.getObject("id", UUID.class), result.getString("channel"), result.getString("merchant_id"),
+                result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                result.getString("organization_name"), result.getString("channel"), result.getString("merchant_id"),
                 result.getString("application_id"), result.getString("secret_reference"),
                 result.getString("notify_url"), result.getString("refund_notify_url"),
                 result.getBoolean("profit_sharing_required"), result.getString("status"),
                 result.getLong("version")), tenantId, channelId).stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Merchant channel does not exist"));
+    }
+
+    private void requireActiveOrganization(UUID tenantId, UUID organizationId) {
+        boolean active = Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists(select 1 from operator_organization
+                               where tenant_id=? and id=? and status='ACTIVE')
+                """, Boolean.class, tenantId, organizationId));
+        if (!active) throw new DomainException("Merchant channel organization does not exist or is not active");
+    }
+
+    private void validateCallbackRoutes(UUID tenantId, String channel, String merchantId,
+                                        String paymentUrl, String refundUrl) {
+        String tenantCode = jdbc.queryForObject("select code from tenant where id=?", String.class, tenantId);
+        String route = "/" + channel + "/" + tenantCode + "/" + merchantId + "/callback";
+        if (!URI.create(paymentUrl).getPath().endsWith("/public/payments" + route)) {
+            throw new DomainException("Payment callback URL must identify the tenant and direct collecting merchant");
+        }
+        if (!URI.create(refundUrl).getPath().endsWith("/public/refunds" + route)) {
+            throw new DomainException("Refund callback URL must identify the tenant and direct collecting merchant");
+        }
     }
 
     private SettlementRuleView settlementRule(UUID tenantId, UUID ruleId) {
@@ -638,7 +682,8 @@ final class FinanceAdminController {
     record CreditInvoiceRequest(
             @NotBlank @Size(max = 500) @Pattern(regexp = "https://.+") String creditNoteUrl,
             @NotBlank @Size(max = 500) String reason) { }
-    record MerchantChannelRequest(@NotBlank String channel, @NotBlank @Size(max = 128) String merchantId,
+    record MerchantChannelRequest(@NotNull UUID organizationId,
+                                  @NotBlank String channel, @NotBlank @Size(max = 128) String merchantId,
                                   @NotBlank @Size(max = 128) String applicationId,
                                   @NotBlank @Pattern(regexp = "env:[A-Z][A-Z0-9_]{1,80}") String secretReference,
                                   @NotBlank @Size(max = 500) @Pattern(regexp = "https://.+") String notifyUrl,
@@ -652,16 +697,19 @@ final class FinanceAdminController {
             @NotNull Boolean profitSharingRequired, @NotBlank String status, @Min(0) long version) { }
     record WalletAdjustmentRequest(@NotNull UUID customerId, @NotBlank String direction,
                                    @Min(1) long amountMinor, @NotBlank @Size(max = 500) String reason) { }
-    record PaymentForRefund(UUID id, UUID orderId, String channel, String providerTransactionNo,
+    record PaymentForRefund(UUID id, UUID orderId, UUID merchantChannelId,
+                            String channel, String providerTransactionNo,
                             long amountMinor, String currency) { }
-    record RefundSeed(UUID id, UUID paymentId, UUID orderId, String merchantRefundNo, String channel,
+    record RefundSeed(UUID id, UUID paymentId, UUID orderId, String merchantRefundNo,
+                      UUID merchantChannelId, String channel,
                       String providerTransactionNo, long amountMinor, long originalPaymentAmountMinor,
                       String currency, String reason) { }
     record PaymentMatch(UUID id, long amountMinor, String providerTransactionNo) { }
     record Rule(UUID organizationId, int shareBasisPoints, int platformServiceFeeBasisPoints,
                 long fixedServiceFeeMinor, int hierarchyLevel) { }
     record WalletBalance(UUID id, long balanceMinor) { }
-    record MerchantChannelView(UUID id, String channel, String merchantId, String applicationId,
+    record MerchantChannelView(UUID id, UUID organizationId, String organizationName,
+                               String channel, String merchantId, String applicationId,
                                String secretReference, String notifyUrl, String refundNotifyUrl,
                                boolean profitSharingRequired, String status, long version) { }
     record PaymentView(UUID id, UUID orderId, String orderNo, String channel, String transactionType,

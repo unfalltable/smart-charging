@@ -25,24 +25,25 @@ class ProfitSharingPlannerTest {
     void snapshotsEveryApprovedReceiverForThePayment() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         UUID tenantId = UUID.randomUUID();
+        UUID merchantChannelId = UUID.randomUUID();
         UUID paymentId = UUID.randomUUID();
         UUID organizationId = UUID.randomUUID();
-        when(jdbc.queryForObject(contains("profit_sharing_required"), eq(Boolean.class),
-                eq(tenantId), eq("WECHAT"))).thenReturn(true);
 
         ResultSet platform = receiver(UUID.randomUUID(), 500, "PLATFORM", null,
                 "1900000100", "Platform Company");
         ResultSet partner = receiver(UUID.randomUUID(), 1_000, "ORGANIZATION", UUID.randomUUID(),
                 "1900000200", "Regional Partner");
         when(jdbc.query(contains("from profit_sharing_policy"), any(RowMapper.class),
-                eq(tenantId), eq(organizationId), eq("WECHAT"), any(LocalDate.class), any(LocalDate.class)))
+                eq(tenantId), eq(organizationId), eq("WECHAT"), eq(merchantChannelId),
+                any(LocalDate.class), any(LocalDate.class)))
                 .thenAnswer(invocation -> {
                     RowMapper<Object> mapper = invocation.getArgument(1);
                     return List.of(mapper.mapRow(platform, 0), mapper.mapRow(partner, 1));
                 });
 
         boolean planned = new ProfitSharingPlanner(jdbc, 3_000)
-                .createPlan(tenantId, paymentId, organizationId, "WECHAT", 10_001);
+                .createPlan(tenantId, merchantChannelId, paymentId, organizationId,
+                        "WECHAT", 10_001, true);
 
         assertThat(planned).isTrue();
         verify(jdbc).update(contains("insert into payment_profit_sharing_order"), any(Object[].class));
@@ -53,15 +54,16 @@ class ProfitSharingPlannerTest {
     void refusesPaymentWhenMandatorySharingHasNoActivePolicy() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         UUID tenantId = UUID.randomUUID();
+        UUID merchantChannelId = UUID.randomUUID();
         UUID organizationId = UUID.randomUUID();
-        when(jdbc.queryForObject(contains("profit_sharing_required"), eq(Boolean.class),
-                eq(tenantId), eq("WECHAT"))).thenReturn(true);
         when(jdbc.query(contains("from profit_sharing_policy"), any(RowMapper.class),
-                eq(tenantId), eq(organizationId), eq("WECHAT"), any(LocalDate.class), any(LocalDate.class)))
+                eq(tenantId), eq(organizationId), eq("WECHAT"), eq(merchantChannelId),
+                any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> new ProfitSharingPlanner(jdbc, 3_000)
-                .createPlan(tenantId, UUID.randomUUID(), organizationId, "WECHAT", 10_000))
+                .createPlan(tenantId, merchantChannelId, UUID.randomUUID(), organizationId,
+                        "WECHAT", 10_000, true))
                 .isInstanceOf(DomainException.class)
                 .hasMessageContaining("no active policy");
     }

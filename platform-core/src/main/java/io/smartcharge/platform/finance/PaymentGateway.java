@@ -11,27 +11,31 @@ public interface PaymentGateway {
 
     GatewayRefund createRefund(GatewayRefundRequest request);
 
-    GatewayPaymentStatus queryPayment(UUID tenantId, String merchantOrderNo);
+    GatewayPaymentStatus queryPayment(UUID tenantId, UUID merchantChannelId, String merchantOrderNo);
 
-    GatewayRefundStatus queryRefund(UUID tenantId, String merchantRefundNo);
+    GatewayRefundStatus queryRefund(UUID tenantId, UUID merchantChannelId, String merchantRefundNo);
 
-    VerifiedCallback verifyCallback(UUID tenantId, Map<String, String> headers, String body);
+    VerifiedCallback verifyCallback(UUID tenantId, UUID merchantChannelId,
+                                    Map<String, String> headers, String body);
 
-    VerifiedRefundCallback verifyRefundCallback(UUID tenantId, Map<String, String> headers, String body);
+    VerifiedRefundCallback verifyRefundCallback(UUID tenantId, UUID merchantChannelId,
+                                                Map<String, String> headers, String body);
 
     void registerProfitSharingReceiver(ProfitSharingReceiver receiver);
 
     GatewayProfitSharing createProfitSharing(GatewayProfitSharingRequest request);
 
-    GatewayProfitSharing queryProfitSharing(UUID tenantId, String providerTransactionNo, String outOrderNo);
+    GatewayProfitSharing queryProfitSharing(UUID tenantId, UUID merchantChannelId,
+                                            String providerTransactionNo, String outOrderNo);
 
     GatewayProfitSharingReturn returnProfitSharing(GatewayProfitSharingReturnRequest request);
 
-    record GatewayPayment(UUID tenantId, UUID paymentId, String merchantOrderNo, long amountMinor,
+    record GatewayPayment(UUID tenantId, UUID merchantChannelId, UUID paymentId,
+                          String merchantOrderNo, long amountMinor,
                           String currency, String description, String payerSubject,
                           boolean profitSharing) { }
     record GatewayIntent(String providerRequestId, Map<String, String> clientParameters) { }
-    record GatewayRefundRequest(UUID tenantId, UUID refundId, String merchantRefundNo,
+    record GatewayRefundRequest(UUID tenantId, UUID merchantChannelId, UUID refundId, String merchantRefundNo,
                                 String providerTransactionNo, long amountMinor,
                                 long originalPaymentAmountMinor, String currency, String reason) { }
     record GatewayRefund(String providerRefundNo, boolean completed) { }
@@ -42,15 +46,17 @@ public interface PaymentGateway {
                             long amountMinor, boolean succeeded, String rawPayload) { }
     record VerifiedRefundCallback(String providerEventId, String merchantRefundNo, String providerRefundNo,
                                   long amountMinor, boolean succeeded, String rawPayload) { }
-    record ProfitSharingReceiver(UUID tenantId, String account, String name,
+    record ProfitSharingReceiver(UUID tenantId, UUID merchantChannelId, String account, String name,
                                  String relationType, String customRelation) { }
     record ProfitSharingAllocation(String account, String name, long amountMinor, String description) { }
-    record GatewayProfitSharingRequest(UUID tenantId, String providerTransactionNo, String outOrderNo,
+    record GatewayProfitSharingRequest(UUID tenantId, UUID merchantChannelId,
+                                       String providerTransactionNo, String outOrderNo,
                                        List<ProfitSharingAllocation> receivers) { }
     record ProfitSharingResult(String account, long amountMinor, ProviderState state, String failReason) { }
     record GatewayProfitSharing(String providerOrderNo, ProviderState state,
                                 List<ProfitSharingResult> receivers) { }
-    record GatewayProfitSharingReturnRequest(UUID tenantId, String providerOrderNo, String outOrderNo,
+    record GatewayProfitSharingReturnRequest(UUID tenantId, UUID merchantChannelId,
+                                             String providerOrderNo, String outOrderNo,
                                              String outReturnNo, String receiverAccount,
                                              long amountMinor, String description) { }
     record GatewayProfitSharingReturn(String providerReturnNo, ProviderState state, String failReason) { }

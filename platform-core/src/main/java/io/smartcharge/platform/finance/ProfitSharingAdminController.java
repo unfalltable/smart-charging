@@ -58,15 +58,24 @@ final class ProfitSharingAdminController {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> jdbc.query("""
                 select r.id, r.owner_type, r.organization_id, o.name organization_name,
+                       r.merchant_channel_id, mc.merchant_id collecting_merchant_id,
+                       collector.name collecting_organization_name,
                        r.channel, r.receiver_type, r.receiver_account, r.receiver_name,
                        r.relation_type, r.custom_relation, r.status, r.version, r.created_at
                   from profit_sharing_receiver r
                   left join operator_organization o
                     on o.tenant_id=r.tenant_id and o.id=r.organization_id
+                  join merchant_channel mc
+                    on mc.tenant_id=r.tenant_id and mc.id=r.merchant_channel_id
+                  join operator_organization collector
+                    on collector.tenant_id=mc.tenant_id and collector.id=mc.organization_id
                  where r.tenant_id=? order by r.owner_type, o.hierarchy_level, o.name, r.created_at
                 """, (result, row) -> new ReceiverView(
                 result.getObject("id", UUID.class), result.getString("owner_type"),
                 result.getObject("organization_id", UUID.class), result.getString("organization_name"),
+                result.getObject("merchant_channel_id", UUID.class),
+                result.getString("collecting_merchant_id"),
+                result.getString("collecting_organization_name"),
                 result.getString("channel"), result.getString("receiver_type"),
                 result.getString("receiver_account"), result.getString("receiver_name"),
                 result.getString("relation_type"), result.getString("custom_relation"),
@@ -81,31 +90,44 @@ final class ProfitSharingAdminController {
         validateReceiver(request, authentication);
         UUID tenantId = TenantContext.requireTenantId();
         ReceiverView registration = tenantJdbc.readWrite(() -> {
-            if ("ORGANIZATION".equals(request.ownerType())) requireActiveOrganization(
-                    tenantId, request.organizationId());
-            String collectingMerchant = jdbc.queryForObject("""
-                    select merchant_id from merchant_channel
-                     where tenant_id=? and channel=? and status='ACTIVE'
-                    """, String.class, tenantId, request.channel());
-            if (request.receiverAccount().equals(collectingMerchant)) {
+            MerchantRoute collectingRoute = merchantRoute(tenantId, request.merchantChannelId());
+            if (!"WECHAT".equals(collectingRoute.channel())) {
+                throw new DomainException("Alipay official profit sharing is reserved but not enabled yet");
+            }
+            if ("ORGANIZATION".equals(request.ownerType())) {
+                requireActiveOrganization(tenantId, request.organizationId());
+                if (!isAncestorOrSelf(tenantId, collectingRoute.organizationId(), request.organizationId())) {
+                    throw new DomainException("A collecting organization may only distribute funds to itself or an upstream organization");
+                }
+            }
+            if (request.receiverAccount().equals(collectingRoute.merchantId())) {
                 throw new DomainException("The direct collecting merchant receives the unallocated remainder and must not be added again");
             }
             ReceiverView existing = jdbc.query("""
                     select r.id, r.owner_type, r.organization_id, o.name organization_name,
+                           r.merchant_channel_id, mc.merchant_id collecting_merchant_id,
+                           collector.name collecting_organization_name,
                            r.channel, r.receiver_type, r.receiver_account, r.receiver_name,
                            r.relation_type, r.custom_relation, r.status, r.version, r.created_at
                       from profit_sharing_receiver r
                       left join operator_organization o
                         on o.tenant_id=r.tenant_id and o.id=r.organization_id
-                     where r.tenant_id=? and r.channel=? and r.receiver_account=? for update of r
+                      join merchant_channel mc
+                        on mc.tenant_id=r.tenant_id and mc.id=r.merchant_channel_id
+                      join operator_organization collector
+                        on collector.tenant_id=mc.tenant_id and collector.id=mc.organization_id
+                     where r.tenant_id=? and r.merchant_channel_id=? and r.receiver_account=? for update of r
                     """, (result, row) -> new ReceiverView(
                     result.getObject("id", UUID.class), result.getString("owner_type"),
                     result.getObject("organization_id", UUID.class), result.getString("organization_name"),
+                    result.getObject("merchant_channel_id", UUID.class),
+                    result.getString("collecting_merchant_id"),
+                    result.getString("collecting_organization_name"),
                     result.getString("channel"), result.getString("receiver_type"),
                     result.getString("receiver_account"), result.getString("receiver_name"),
                     result.getString("relation_type"), result.getString("custom_relation"),
                     result.getString("status"), result.getLong("version"),
-                    result.getTimestamp("created_at").toInstant()), tenantId, request.channel(),
+                    result.getTimestamp("created_at").toInstant()), tenantId, request.merchantChannelId(),
                     request.receiverAccount()).stream().findFirst().orElse(null);
             if (existing != null && "ACTIVE".equals(existing.status())) {
                 throw new DomainException("Profit-sharing receiver is already active");
@@ -117,10 +139,12 @@ final class ProfitSharingAdminController {
             if (existing == null) {
                 jdbc.update("""
                         insert into profit_sharing_receiver
-                            (id, tenant_id, owner_type, organization_id, channel, receiver_type,
+                            (id, tenant_id, owner_type, organization_id, merchant_channel_id,
+                             channel, receiver_type,
                              receiver_account, receiver_name, relation_type, custom_relation, status)
-                        values (?, ?, ?, ?, ?, 'MERCHANT_ID', ?, ?, ?, ?, 'PENDING')
-                        """, id, tenantId, request.ownerType(), request.organizationId(), request.channel(),
+                        values (?, ?, ?, ?, ?, ?, 'MERCHANT_ID', ?, ?, ?, ?, 'PENDING')
+                        """, id, tenantId, request.ownerType(), request.organizationId(),
+                        request.merchantChannelId(), collectingRoute.channel(),
                         request.receiverAccount(), request.receiverName(), request.relationType(),
                         request.customRelation());
             } else {
@@ -135,8 +159,9 @@ final class ProfitSharingAdminController {
             return receiver(tenantId, id);
         });
         try {
-            gateways.required(request.channel()).registerProfitSharingReceiver(
-                    new PaymentGateway.ProfitSharingReceiver(tenantId, request.receiverAccount(),
+            gateways.required(registration.channel()).registerProfitSharingReceiver(
+                    new PaymentGateway.ProfitSharingReceiver(tenantId, request.merchantChannelId(),
+                            request.receiverAccount(),
                             request.receiverName(), request.relationType(), request.customRelation()));
         } catch (RuntimeException failure) {
             tenantJdbc.readWrite(() -> {
@@ -225,12 +250,19 @@ final class ProfitSharingAdminController {
                      where tenant_id=? and id=? for update
                     """, UUID.class, tenantId, request.sourceOrganizationId());
             ReceiverIdentity receiver = jdbc.query("""
-                    select owner_type, organization_id, channel from profit_sharing_receiver
+                    select owner_type, organization_id, merchant_channel_id, channel
+                      from profit_sharing_receiver
                      where tenant_id=? and id=? and status='ACTIVE'
                     """, (result, row) -> new ReceiverIdentity(
                     result.getString("owner_type"), result.getObject("organization_id", UUID.class),
+                    result.getObject("merchant_channel_id", UUID.class),
                     result.getString("channel")), tenantId, request.receiverId()).stream().findFirst()
                     .orElseThrow(() -> new DomainException("Profit-sharing receiver is not active"));
+            MerchantRoute sourceRoute = merchantRouteForOrganization(
+                    tenantId, request.sourceOrganizationId(), receiver.channel());
+            if (!sourceRoute.id().equals(receiver.merchantChannelId())) {
+                throw new DomainException("The receiver was not registered with this organization's collecting merchant");
+            }
             if (receiver.organizationId() != null && !isAncestorOrSelf(
                     tenantId, request.sourceOrganizationId(), receiver.organizationId())) {
                 throw new DomainException("An organization may only distribute funds to itself or an upstream organization");
@@ -318,9 +350,6 @@ final class ProfitSharingAdminController {
         if (!Set.of("PLATFORM", "ORGANIZATION").contains(request.ownerType())) {
             throw new IllegalArgumentException("Invalid receiver owner type");
         }
-        if (!"WECHAT".equals(request.channel())) {
-            throw new DomainException("Alipay official profit sharing is reserved but not enabled yet");
-        }
         if (!RELATIONS.contains(request.relationType())) throw new IllegalArgumentException("Invalid relation type");
         if ("CUSTOM".equals(request.relationType()) != (request.customRelation() != null)) {
             throw new IllegalArgumentException("Custom relation is required only for CUSTOM relation type");
@@ -357,20 +386,50 @@ final class ProfitSharingAdminController {
     private ReceiverView receiver(UUID tenantId, UUID receiverId) {
         return jdbc.query("""
                 select r.id, r.owner_type, r.organization_id, o.name organization_name,
+                       r.merchant_channel_id, mc.merchant_id collecting_merchant_id,
+                       collector.name collecting_organization_name,
                        r.channel, r.receiver_type, r.receiver_account, r.receiver_name,
                        r.relation_type, r.custom_relation, r.status, r.version, r.created_at
                   from profit_sharing_receiver r
                   left join operator_organization o on o.tenant_id=r.tenant_id and o.id=r.organization_id
+                  join merchant_channel mc on mc.tenant_id=r.tenant_id and mc.id=r.merchant_channel_id
+                  join operator_organization collector
+                    on collector.tenant_id=mc.tenant_id and collector.id=mc.organization_id
                  where r.tenant_id=? and r.id=?
                 """, (result, row) -> new ReceiverView(
                 result.getObject("id", UUID.class), result.getString("owner_type"),
                 result.getObject("organization_id", UUID.class), result.getString("organization_name"),
+                result.getObject("merchant_channel_id", UUID.class),
+                result.getString("collecting_merchant_id"), result.getString("collecting_organization_name"),
                 result.getString("channel"), result.getString("receiver_type"),
                 result.getString("receiver_account"), result.getString("receiver_name"),
                 result.getString("relation_type"), result.getString("custom_relation"),
                 result.getString("status"), result.getLong("version"),
                 result.getTimestamp("created_at").toInstant()), tenantId, receiverId).stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Profit-sharing receiver does not exist"));
+    }
+
+    private MerchantRoute merchantRoute(UUID tenantId, UUID merchantChannelId) {
+        return jdbc.query("""
+                select id, organization_id, channel, merchant_id from merchant_channel
+                 where tenant_id=? and id=? and status='ACTIVE'
+                """, (result, row) -> new MerchantRoute(
+                result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                result.getString("channel"), result.getString("merchant_id")),
+                tenantId, merchantChannelId).stream().findFirst()
+                .orElseThrow(() -> new DomainException("Collecting merchant channel is not active"));
+    }
+
+    private MerchantRoute merchantRouteForOrganization(UUID tenantId, UUID organizationId, String channel) {
+        return jdbc.query("""
+                select id, organization_id, channel, merchant_id from merchant_channel
+                 where tenant_id=? and organization_id=? and channel=? and status='ACTIVE'
+                """, (result, row) -> new MerchantRoute(
+                result.getObject("id", UUID.class), result.getObject("organization_id", UUID.class),
+                result.getString("channel"), result.getString("merchant_id")),
+                tenantId, organizationId, channel).stream().findFirst()
+                .orElseThrow(() -> new DomainException(
+                        "The source organization has no active direct collecting merchant channel"));
     }
 
     private PolicyView policy(UUID tenantId, UUID policyId) {
@@ -398,8 +457,7 @@ final class ProfitSharingAdminController {
     }
 
     record RegisterReceiverRequest(
-            @NotBlank String ownerType, UUID organizationId,
-            @NotBlank String channel,
+            @NotBlank String ownerType, UUID organizationId, @NotNull UUID merchantChannelId,
             @NotBlank @Pattern(regexp = "[0-9]{6,32}") String receiverAccount,
             @NotBlank @Size(max = 160) String receiverName,
             @NotBlank String relationType,
@@ -415,6 +473,8 @@ final class ProfitSharingAdminController {
         }
     }
     record ReceiverView(UUID id, String ownerType, UUID organizationId, String organizationName,
+                        UUID merchantChannelId, String collectingMerchantId,
+                        String collectingOrganizationName,
                         String channel, String receiverType, String receiverAccount, String receiverName,
                         String relationType, String customRelation, String status, long version,
                         Instant createdAt) { }
@@ -428,5 +488,7 @@ final class ProfitSharingAdminController {
     record SharingReturnView(UUID id, UUID refundId, String outReturnNo, String providerReturnNo,
                              String receiverAccount, long amountMinor, String status, int attempts,
                              String lastError, Instant createdAt, Instant completedAt) { }
-    private record ReceiverIdentity(String ownerType, UUID organizationId, String channel) { }
+    private record ReceiverIdentity(String ownerType, UUID organizationId,
+                                    UUID merchantChannelId, String channel) { }
+    private record MerchantRoute(UUID id, UUID organizationId, String channel, String merchantId) { }
 }
