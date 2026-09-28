@@ -54,7 +54,7 @@
 | 账号生命周期 | `IDENTITY_INVITATION_LIFESPAN_HOURS`、`IDENTITY_LOGIN_EVENT_RETENTION_DAYS`、`IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS` | 临时账号有效期、管理员登录事件与过期刷新令牌留存期；到期数据由服务端每日自动清理 |
 | 微信身份 | `WECHAT_IDENTITY_ENABLED`、`WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_TENANT_CODE` | 有真实小程序资质后启用 |
 | 微信通知 | `WECHAT_NOTIFICATION_ENABLED`、`WECHAT_NOTIFICATION_TEMPLATES_JSON` | 通知类型到微信订阅消息模板的映射 |
-| 微信支付 | `WECHAT_PAYMENT_ENABLED`、`WECHAT_PAYMENT_DIRECTORY`、`WECHAT_PRIMARY_*` | 真实商户 APIv3 密钥和只读证书目录 |
+| 微信支付 | `WECHAT_PAYMENT_ENABLED`、`WECHAT_PAYMENT_DIRECTORY`、`WECHAT_PRIMARY_*`、`PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS` | 真实商户 APIv3 密钥、只读证书目录，以及支付机构实际批准的分账比例上限（100 基点 = 1%） |
 | 设备网关 | `DEVICE_GATEWAY_ENABLED`、`DEVICE_GATEWAY_BIND_ADDRESS`、`DEVICE_TLS_DIRECTORY` | 启用后目录必须包含 `tls.crt`、`tls.key`、`ca.crt` |
 | 小程序三环境 | `MINIAPP_DEVELOP_*`、`MINIAPP_TRIAL_*`、`MINIAPP_RELEASE_*` | HTTPS API、租户编码和订阅模板 ID |
 | 本机端口 | `ADMIN_WEB_PORT`、`CORE_PORT`、`DEVICE_GATEWAY_PORT`、`DEVICE_MANAGEMENT_PORT`、`POSTGRES_PORT`、`VALKEY_PORT`、`NATS_PORT`、`NATS_MONITOR_PORT` | 校验范围和端口冲突 |
@@ -62,7 +62,7 @@
 
 ## 不放在部署文件里的业务配置
 
-租户、员工成员关系、渠道组织、场站、设备、端口、费率、商户通道、订单、支付、退款和结算都是生产业务数据，必须通过管理后台或受控接口写入数据库，不能写进 `.env.docker`。仓库及初始化流程不会创建这些数据。
+租户、员工成员关系、渠道组织、场站、设备、端口、费率、商户通道、分账接收方、逐笔分账规则、订单、支付、退款和内部核算都是生产业务数据，必须通过管理后台或受控接口写入数据库，不能写进 `.env.docker`。仓库及初始化流程不会创建这些数据。每个分账接收方保存的是支付机构已审核的真实商户号和法定名称，不保存二维码图片或个人收款码。
 
 ## 生产环境要求
 

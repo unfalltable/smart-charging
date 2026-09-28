@@ -39,6 +39,9 @@ info:
     revision: ${APP_BUILD_REVISION:unknown}
 charging:
   qr-signing-secret: ${QR_SIGNING_SECRET}
+  payment:
+    profit-sharing:
+      maximum-basis-points: ${PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS:3000}
   security:
     app-issuer: ${APP_JWT_ISSUER}
     app-jwt-secret-base64: ${AUTH_JWT_SECRET_BASE64}

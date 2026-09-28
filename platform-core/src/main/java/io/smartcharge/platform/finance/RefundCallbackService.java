@@ -14,13 +14,16 @@ final class RefundCallbackService {
     private final TenantJdbcExecutor tenantJdbc;
     private final PaymentGatewayRegistry gateways;
     private final AuditService audit;
+    private final ProfitSharingReturnPlanner profitSharingReturns;
 
     RefundCallbackService(JdbcTemplate jdbc, TenantJdbcExecutor tenantJdbc,
-                          PaymentGatewayRegistry gateways, AuditService audit) {
+                          PaymentGatewayRegistry gateways, AuditService audit,
+                          ProfitSharingReturnPlanner profitSharingReturns) {
         this.jdbc = jdbc;
         this.tenantJdbc = tenantJdbc;
         this.gateways = gateways;
         this.audit = audit;
+        this.profitSharingReturns = profitSharingReturns;
     }
 
     void process(String channel, String tenantCode, Map<String, String> headers, String body) {
@@ -94,6 +97,7 @@ final class RefundCallbackService {
                 """, refund.amountMinor(), tenantId, refund.orderId(), refund.amountMinor());
         if (orderChanged != 1) throw new DomainException("Refund would make the paid amount negative");
         reverseLedger(tenantId, refund);
+        profitSharingReturns.onRefundSucceeded(tenantId, refund.paymentId(), refund.id());
         jdbc.update("""
                 insert into notification_outbox (id, tenant_id, channel, template_code, recipient, payload, status)
                 values (?, ?, ?, 'REFUND_SUCCEEDED', ?,

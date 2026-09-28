@@ -9,7 +9,21 @@ import com.wechat.pay.java.service.payments.jsapi.model.Payer;
 import com.wechat.pay.java.service.payments.jsapi.model.PrepayRequest;
 import com.wechat.pay.java.service.payments.jsapi.model.PrepayWithRequestPaymentResponse;
 import com.wechat.pay.java.service.payments.jsapi.model.QueryOrderByOutTradeNoRequest;
+import com.wechat.pay.java.service.payments.jsapi.model.SettleInfo;
 import com.wechat.pay.java.service.payments.model.Transaction;
+import com.wechat.pay.java.service.profitsharing.ProfitsharingService;
+import com.wechat.pay.java.service.profitsharing.model.AddReceiverRequest;
+import com.wechat.pay.java.service.profitsharing.model.CreateOrderReceiver;
+import com.wechat.pay.java.service.profitsharing.model.CreateOrderRequest;
+import com.wechat.pay.java.service.profitsharing.model.CreateReturnOrderRequest;
+import com.wechat.pay.java.service.profitsharing.model.DetailStatus;
+import com.wechat.pay.java.service.profitsharing.model.OrderStatus;
+import com.wechat.pay.java.service.profitsharing.model.OrdersEntity;
+import com.wechat.pay.java.service.profitsharing.model.QueryOrderRequest;
+import com.wechat.pay.java.service.profitsharing.model.ReceiverRelationType;
+import com.wechat.pay.java.service.profitsharing.model.ReceiverType;
+import com.wechat.pay.java.service.profitsharing.model.ReturnOrderStatus;
+import com.wechat.pay.java.service.profitsharing.model.ReturnOrdersEntity;
 import com.wechat.pay.java.service.refund.RefundService;
 import com.wechat.pay.java.service.refund.model.AmountReq;
 import com.wechat.pay.java.service.refund.model.CreateRequest;
@@ -21,6 +35,7 @@ import io.smartcharge.platform.shared.domain.DomainException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -62,6 +77,11 @@ final class WeChatPaymentGateway implements PaymentGateway {
         Payer payer = new Payer();
         payer.setOpenid(payment.payerSubject());
         request.setPayer(payer);
+        if (payment.profitSharing()) {
+            SettleInfo settleInfo = new SettleInfo();
+            settleInfo.setProfitSharing(true);
+            request.setSettleInfo(settleInfo);
+        }
         PrepayWithRequestPaymentResponse response = client.jsapi().prepayWithRequestPayment(request);
         Map<String, String> parameters = Map.of(
                 "appId", response.getAppId(), "timeStamp", response.getTimeStamp(),
@@ -141,6 +161,83 @@ final class WeChatPaymentGateway implements PaymentGateway {
                 refund.getAmount().getRefund(), refund.getRefundStatus() == Status.SUCCESS, body);
     }
 
+    @Override
+    public void registerProfitSharingReceiver(ProfitSharingReceiver receiver) {
+        Client client = client(receiver.tenantId());
+        AddReceiverRequest request = new AddReceiverRequest();
+        request.setAppid(client.channel().applicationId());
+        request.setType(ReceiverType.MERCHANT_ID);
+        request.setAccount(receiver.account());
+        request.setName(receiver.name());
+        request.setRelationType(ReceiverRelationType.valueOf(receiver.relationType()));
+        request.setCustomRelation(receiver.customRelation());
+        client.profitSharing().addReceiver(request);
+    }
+
+    @Override
+    public GatewayProfitSharing createProfitSharing(GatewayProfitSharingRequest sharing) {
+        Client client = client(sharing.tenantId());
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setAppid(client.channel().applicationId());
+        request.setTransactionId(sharing.providerTransactionNo());
+        request.setOutOrderNo(sharing.outOrderNo());
+        request.setReceivers(sharing.receivers().stream().map(receiver -> {
+            CreateOrderReceiver target = new CreateOrderReceiver();
+            target.setType("MERCHANT_ID");
+            target.setAccount(receiver.account());
+            target.setName(receiver.name());
+            target.setAmount(receiver.amountMinor());
+            target.setDescription(receiver.description());
+            return target;
+        }).toList());
+        request.setUnfreezeUnsplit(true);
+        return map(client.profitSharing().createOrder(request));
+    }
+
+    @Override
+    public GatewayProfitSharing queryProfitSharing(UUID tenantId, String providerTransactionNo,
+                                                    String outOrderNo) {
+        Client client = client(tenantId);
+        QueryOrderRequest request = new QueryOrderRequest();
+        request.setTransactionId(providerTransactionNo);
+        request.setOutOrderNo(outOrderNo);
+        return map(client.profitSharing().queryOrder(request));
+    }
+
+    @Override
+    public GatewayProfitSharingReturn returnProfitSharing(GatewayProfitSharingReturnRequest returning) {
+        Client client = client(returning.tenantId());
+        CreateReturnOrderRequest request = new CreateReturnOrderRequest();
+        request.setOrderId(returning.providerOrderNo());
+        request.setOutOrderNo(returning.outOrderNo());
+        request.setOutReturnNo(returning.outReturnNo());
+        request.setReturnMchid(returning.receiverAccount());
+        request.setAmount(returning.amountMinor());
+        request.setDescription(returning.description());
+        ReturnOrdersEntity response = client.profitSharing().createReturnOrder(request);
+        ProviderState state = switch (response.getResult()) {
+            case SUCCESS -> ProviderState.SUCCEEDED;
+            case FAILED -> ProviderState.FAILED;
+            case PROCESSING -> ProviderState.PENDING;
+        };
+        return new GatewayProfitSharingReturn(response.getReturnId(), state,
+                response.getFailReason() == null ? null : response.getFailReason().name());
+    }
+
+    private static GatewayProfitSharing map(OrdersEntity order) {
+        List<ProfitSharingResult> receivers = order.getReceivers() == null ? List.of()
+                : order.getReceivers().stream().map(receiver -> new ProfitSharingResult(
+                        receiver.getAccount(), receiver.getAmount() == null ? 0 : receiver.getAmount(),
+                        receiver.getResult() == DetailStatus.SUCCESS ? ProviderState.SUCCEEDED
+                                : receiver.getResult() == DetailStatus.CLOSED ? ProviderState.FAILED
+                                : ProviderState.PENDING,
+                        receiver.getFailReason() == null ? null : receiver.getFailReason().name())).toList();
+        ProviderState state = order.getState() == OrderStatus.PROCESSING ? ProviderState.PENDING
+                : receivers.stream().allMatch(receiver -> receiver.state() == ProviderState.SUCCEEDED)
+                ? ProviderState.SUCCEEDED : ProviderState.FAILED;
+        return new GatewayProfitSharing(order.getOrderId(), state, receivers);
+    }
+
     private Client client(UUID tenantId) {
         MerchantChannelRepository.Configuration channel = channels.requireActive(tenantId, "WECHAT");
         Client existing = clients.get(channel.id());
@@ -156,7 +253,8 @@ final class WeChatPaymentGateway implements PaymentGateway {
                 .build();
         Client created = new Client(channel,
                 new JsapiServiceExtension.Builder().config(config).signType("RSA").build(),
-                new RefundService.Builder().config(config).build(), new NotificationParser(config));
+                new RefundService.Builder().config(config).build(),
+                new ProfitsharingService.Builder().config(config).build(), new NotificationParser(config));
         clients.put(channel.id(), created);
         return created;
     }
@@ -203,5 +301,6 @@ final class WeChatPaymentGateway implements PaymentGateway {
 
     private record Client(MerchantChannelRepository.Configuration channel,
                           JsapiServiceExtension jsapi, RefundService refunds,
+                          ProfitsharingService profitSharing,
                           NotificationParser parser) { }
 }

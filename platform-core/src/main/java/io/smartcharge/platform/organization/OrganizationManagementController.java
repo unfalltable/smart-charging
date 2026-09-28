@@ -28,7 +28,8 @@ import org.springframework.web.bind.annotation.RestController;
 final class OrganizationManagementController {
     private static final Set<String> ROOT_TYPES = Set.of(
             "REGIONAL_OPERATOR", "FIRST_TIER_CONTRACTOR", "DIRECT_BRANCH");
-    private static final Set<String> CHILD_TYPES = Set.of("SECOND_TIER_PARTNER", "SITE_PARTNER");
+    private static final Set<String> SECOND_LEVEL_TYPES = Set.of("SECOND_TIER_PARTNER", "SITE_PARTNER");
+    private static final Set<String> THIRD_LEVEL_TYPES = Set.of("THIRD_TIER_FRANCHISE", "SITE_PARTNER");
     private static final Set<String> STATES = Set.of("ACTIVE", "SUSPENDED", "CLOSED");
 
     private final JdbcTemplate jdbc;
@@ -49,7 +50,7 @@ final class OrganizationManagementController {
             OrganizationView root = organizations.stream().filter(row -> row.hierarchyLevel() == 1)
                     .findFirst().orElseThrow(() -> new DomainException("Tenant root organization is missing"));
             List<OrganizationView> children = organizations.stream()
-                    .filter(row -> row.hierarchyLevel() == 2).toList();
+                    .filter(row -> row.hierarchyLevel() > 1).toList();
             OrganizationTotals totals = jdbc.queryForObject("""
                     select
                         (select count(*) from station where tenant_id=? and status<>'CLOSED') station_count,
@@ -67,22 +68,27 @@ final class OrganizationManagementController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     OrganizationView create(@Valid @RequestBody CreateOrganizationRequest request) {
-        requireType(CHILD_TYPES, request.organizationType());
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
-            boolean validParent = Boolean.TRUE.equals(jdbc.queryForObject("""
-                    select exists(select 1 from operator_organization
-                                   where tenant_id=? and id=? and hierarchy_level=1 and status='ACTIVE')
-                    """, Boolean.class, tenantId, request.parentId()));
-            if (!validParent) throw new DomainException("Parent must be the active first-tier organization");
+            Integer parentLevel = jdbc.query("""
+                    select hierarchy_level from operator_organization
+                     where tenant_id=? and id=? and status='ACTIVE' for update
+                    """, (result, row) -> result.getInt(1), tenantId, request.parentId())
+                    .stream().findFirst().orElseThrow(() ->
+                            new DomainException("Parent organization does not exist or is not active"));
+            int hierarchyLevel = parentLevel + 1;
+            if (hierarchyLevel > 3) throw new DomainException("Organization hierarchy supports at most three levels");
+            requireType(hierarchyLevel == 2 ? SECOND_LEVEL_TYPES : THIRD_LEVEL_TYPES,
+                    request.organizationType());
             UUID id = UUID.randomUUID();
             jdbc.update("""
                     insert into operator_organization
                         (id, tenant_id, parent_id, code, name, organization_type, hierarchy_level,
                          contact_name, contact_mobile, status)
-                    values (?, ?, ?, ?, ?, ?, 2, ?, ?, 'ACTIVE')
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
                     """, id, tenantId, request.parentId(), request.code(), request.name(),
-                    request.organizationType(), blankToNull(request.contactName()), blankToNull(request.contactMobile()));
+                    request.organizationType(), hierarchyLevel, blankToNull(request.contactName()),
+                    blankToNull(request.contactMobile()));
             OrganizationView view = organization(tenantId, id);
             audit.record("ORGANIZATION_CREATED", "operator_organization", id, null, view);
             return view;
@@ -96,16 +102,21 @@ final class OrganizationManagementController {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
             OrganizationView before = organization(tenantId, organizationId);
-            requireType(before.hierarchyLevel() == 1 ? ROOT_TYPES : CHILD_TYPES, request.organizationType());
+            requireType(typesForLevel(before.hierarchyLevel()), request.organizationType());
             if (before.hierarchyLevel() == 1 && !"ACTIVE".equals(request.status())) {
                 throw new DomainException("Use the tenant lifecycle to suspend or close a first-tier organization");
             }
-            if (before.hierarchyLevel() == 2 && "CLOSED".equals(request.status())) {
+            if (before.hierarchyLevel() > 1 && "CLOSED".equals(request.status())) {
                 boolean hasLiveStations = Boolean.TRUE.equals(jdbc.queryForObject("""
                         select exists(select 1 from station
                                        where tenant_id=? and organization_id=? and status<>'CLOSED')
                         """, Boolean.class, tenantId, organizationId));
                 if (hasLiveStations) throw new DomainException("Close or reassign active stations before closing the organization");
+                boolean hasLiveChildren = Boolean.TRUE.equals(jdbc.queryForObject("""
+                        select exists(select 1 from operator_organization
+                                       where tenant_id=? and parent_id=? and status<>'CLOSED')
+                        """, Boolean.class, tenantId, organizationId));
+                if (hasLiveChildren) throw new DomainException("Close child organizations before closing the organization");
             }
             int changed = jdbc.update("""
                     update operator_organization
@@ -173,6 +184,15 @@ final class OrganizationManagementController {
 
     private static void requireType(Set<String> allowed, String type) {
         if (!allowed.contains(type)) throw new IllegalArgumentException("Invalid organization type");
+    }
+
+    private static Set<String> typesForLevel(int level) {
+        return switch (level) {
+            case 1 -> ROOT_TYPES;
+            case 2 -> SECOND_LEVEL_TYPES;
+            case 3 -> THIRD_LEVEL_TYPES;
+            default -> throw new IllegalArgumentException("Invalid organization level");
+        };
     }
 
     private static String blankToNull(String value) {

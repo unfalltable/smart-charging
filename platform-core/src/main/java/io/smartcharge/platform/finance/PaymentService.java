@@ -25,15 +25,17 @@ final class PaymentService {
     private final CurrentCustomer currentCustomer;
     private final PaymentGatewayRegistry gateways;
     private final AuditService audit;
+    private final ProfitSharingPlanner profitSharing;
     private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
     PaymentService(JdbcTemplate jdbc, TenantJdbcExecutor tenantJdbc, CurrentCustomer currentCustomer,
-                   PaymentGatewayRegistry gateways, AuditService audit) {
+                   PaymentGatewayRegistry gateways, AuditService audit, ProfitSharingPlanner profitSharing) {
         this.jdbc = jdbc;
         this.tenantJdbc = tenantJdbc;
         this.currentCustomer = currentCustomer;
         this.gateways = gateways;
         this.audit = audit;
+        this.profitSharing = profitSharing;
     }
 
     PaymentIntent create(String idempotencyKey, UUID orderId, String channel) {
@@ -55,7 +57,7 @@ final class PaymentService {
         try {
             PaymentGateway.GatewayIntent intent = gateway.createPayment(new PaymentGateway.GatewayPayment(
                     tenantId, payment.id(), payment.merchantOrderNo(), payment.amountMinor(), payment.currency(),
-                    "Charging order " + payment.orderNo(), payment.payerSubject()));
+                    "Charging order " + payment.orderNo(), payment.payerSubject(), payment.profitSharing()));
             String response = toJson(intent.clientParameters());
             tenantJdbc.readWrite(() -> {
                 jdbc.update("""
@@ -135,11 +137,17 @@ final class PaymentService {
             return lockCustomerPayment(tenantId, customerId, existing.paymentId());
         }
         OrderToPay order = jdbc.query("""
-                select order_no, payable_amount_minor, paid_amount_minor, currency, status
-                  from charging_order where tenant_id=? and customer_id=? and id=? for update
+                select o.order_no, o.payable_amount_minor, o.paid_amount_minor, o.currency, o.status,
+                       s.organization_id
+                  from charging_order o
+                  join connector c on c.tenant_id=o.tenant_id and c.id=o.connector_id
+                  join device d on d.tenant_id=c.tenant_id and d.id=c.device_id
+                  join station s on s.tenant_id=d.tenant_id and s.id=d.station_id
+                 where o.tenant_id=? and o.customer_id=? and o.id=? for update of o
                 """, (result, row) -> new OrderToPay(
                     result.getString("order_no"), result.getLong("payable_amount_minor"),
-                    result.getLong("paid_amount_minor"), result.getString("currency"), result.getString("status")),
+                    result.getLong("paid_amount_minor"), result.getString("currency"), result.getString("status"),
+                    result.getObject("organization_id", UUID.class)),
                 tenantId, customerId, orderId).stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Order does not exist"));
         if (!"COMPLETED".equals(order.status())) throw new DomainException("Order can only be paid after charging completes");
@@ -147,7 +155,7 @@ final class PaymentService {
         if (amount <= 0) throw new DomainException("Order has no outstanding balance");
         PaymentRecord active = jdbc.query("""
                 select p.id, p.order_id, o.order_no, p.merchant_order_no, p.channel, p.amount_minor, p.currency,
-                       p.status, p.response_payload::text,
+                       p.status, p.profit_sharing_required, p.response_payload::text,
                        (select ci.provider_subject from customer_identity ci
                          where ci.tenant_id=p.tenant_id and ci.customer_id=o.customer_id and ci.provider=p.channel
                          order by ci.created_at limit 1) payer_subject
@@ -171,6 +179,14 @@ final class PaymentService {
                 values (?, ?, ?, ?, 'PAY', ?, ?, ?, 'CREATED', cast(? as jsonb))
                 """, paymentId, tenantId, orderId, channel, merchantOrderNo, amount, order.currency(),
                 toJson(Map.of("idempotencyKeyHash", sha256(idempotencyKey))));
+        boolean profitSharingRequired = profitSharing.createPlan(tenantId, paymentId,
+                order.organizationId(), channel, amount);
+        if (profitSharingRequired) {
+            jdbc.update("""
+                    update payment_transaction set profit_sharing_required=true
+                     where tenant_id=? and id=?
+                    """, tenantId, paymentId);
+        }
         jdbc.update("insert into payment_route (merchant_order_no, tenant_id, payment_id) values (?, ?, ?)",
                 merchantOrderNo, tenantId, paymentId);
         saveIdempotency(tenantId, idempotencyKey, requestHash, paymentId);
@@ -182,7 +198,7 @@ final class PaymentService {
                 """, (result, row) -> result.getString(1), tenantId, customerId, channel)
                 .stream().findFirst().orElse(null);
         return new PaymentRecord(paymentId, orderId, order.orderNo(), merchantOrderNo, channel,
-                amount, order.currency(), "CREATED", payerSubject, null);
+                amount, order.currency(), "CREATED", payerSubject, profitSharingRequired, null);
     }
 
     private void saveIdempotency(UUID tenantId, String key, String requestHash, UUID paymentId) {
@@ -266,7 +282,7 @@ final class PaymentService {
     private PaymentRecord lockCustomerPayment(UUID tenantId, UUID customerId, UUID paymentId) {
         return jdbc.query("""
                 select p.id, p.order_id, o.order_no, p.merchant_order_no, p.channel, p.amount_minor, p.currency, p.status,
-                       p.response_payload::text,
+                       p.profit_sharing_required, p.response_payload::text,
                        (select ci.provider_subject from customer_identity ci
                          where ci.tenant_id=p.tenant_id and ci.customer_id=o.customer_id and ci.provider=p.channel
                          order by ci.created_at limit 1) payer_subject
@@ -279,7 +295,7 @@ final class PaymentService {
     private PaymentRecord lockPayment(UUID tenantId, UUID paymentId) {
         return jdbc.query("""
                 select p.id, p.order_id, o.order_no, p.merchant_order_no, p.channel, p.amount_minor, p.currency, p.status,
-                       p.response_payload::text,
+                       p.profit_sharing_required, p.response_payload::text,
                        (select ci.provider_subject from customer_identity ci
                          where ci.tenant_id=p.tenant_id and ci.customer_id=o.customer_id and ci.provider=p.channel
                          order by ci.created_at limit 1) payer_subject
@@ -293,7 +309,8 @@ final class PaymentService {
         return new PaymentRecord(result.getObject("id", UUID.class), result.getObject("order_id", UUID.class),
                 result.getString("order_no"), result.getString("merchant_order_no"), result.getString("channel"),
                 result.getLong("amount_minor"), result.getString("currency"), result.getString("status"),
-                result.getString("payer_subject"), clientParameters(result.getString("response_payload")));
+                result.getString("payer_subject"), result.getBoolean("profit_sharing_required"),
+                clientParameters(result.getString("response_payload")));
     }
 
     @SuppressWarnings("unchecked")
@@ -339,9 +356,11 @@ final class PaymentService {
     }
 
     record Idempotency(String requestHash, UUID paymentId) { }
-    record OrderToPay(String orderNo, long payableAmountMinor, long paidAmountMinor, String currency, String status) { }
+    record OrderToPay(String orderNo, long payableAmountMinor, long paidAmountMinor, String currency, String status,
+                      UUID organizationId) { }
     record PaymentRecord(UUID id, UUID orderId, String orderNo, String merchantOrderNo, String channel,
                          long amountMinor, String currency, String status, String payerSubject,
+                         boolean profitSharing,
                          Map<String, String> clientParameters) { }
     record Route(UUID tenantId, UUID paymentId) { }
     record PaymentIntent(UUID paymentId, String merchantOrderNo, String channel, long amountMinor,

@@ -96,12 +96,19 @@ final class PlatformTenantManagementController {
                     - (select coalesce(sum(amount_minor), 0) from refund_transaction, context
                       where refund_transaction.tenant_id=context.tenant_id and status='SUCCEEDED'
                         and completed_at >= context.today_start) as today_net_revenue_minor,
-                    (select coalesce(sum(platform_service_fee_minor), 0) from settlement_statement, context
-                      where settlement_statement.tenant_id=context.tenant_id
-                        and status in ('CONFIRMED', 'PAYING', 'PAID')) as confirmed_platform_service_fee_minor,
-                    (select coalesce(sum(platform_service_fee_minor), 0) from settlement_statement, context
-                      where settlement_statement.tenant_id=context.tenant_id
-                        and status in ('CONFIRMED', 'PAYING')) as pending_platform_service_fee_minor
+                    (select coalesce(sum(amount_minor), 0) from payment_profit_sharing_detail, context
+                      where payment_profit_sharing_detail.tenant_id=context.tenant_id
+                        and owner_type='PLATFORM' and status='SUCCESS')
+                    - (select coalesce(sum(r.amount_minor), 0)
+                         from payment_profit_sharing_return r
+                         join payment_profit_sharing_detail d
+                           on d.tenant_id=r.tenant_id and d.id=r.sharing_detail_id
+                         cross join context
+                        where r.tenant_id=context.tenant_id and d.owner_type='PLATFORM'
+                          and r.status='SUCCEEDED') as confirmed_platform_service_fee_minor,
+                    (select coalesce(sum(amount_minor), 0) from payment_profit_sharing_detail, context
+                      where payment_profit_sharing_detail.tenant_id=context.tenant_id
+                        and owner_type='PLATFORM' and status='PENDING') as pending_platform_service_fee_minor
                 """, (result, row) -> new TenantCounts(
                 result.getLong("active_members"), result.getLong("stations"), result.getLong("devices"),
                 result.getLong("online_devices"), result.getLong("successful_payments_today"),

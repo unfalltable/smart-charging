@@ -59,13 +59,14 @@ final class FinanceAdminController {
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> jdbc.query("""
                 select id, channel, merchant_id, application_id, secret_reference, notify_url,
-                       refund_notify_url, status, version
+                       refund_notify_url, profit_sharing_required, status, version
                   from merchant_channel where tenant_id=? order by channel, merchant_id
                 """, (result, row) -> new MerchantChannelView(
                     result.getObject("id", UUID.class), result.getString("channel"),
                     result.getString("merchant_id"), result.getString("application_id"),
                     result.getString("secret_reference"), result.getString("notify_url"),
-                    result.getString("refund_notify_url"), result.getString("status"),
+                    result.getString("refund_notify_url"), result.getBoolean("profit_sharing_required"),
+                    result.getString("status"),
                     result.getLong("version")), tenantId));
     }
 
@@ -84,13 +85,14 @@ final class FinanceAdminController {
             jdbc.update("""
                     insert into merchant_channel
                         (id, tenant_id, channel, merchant_id, application_id, secret_reference,
-                         notify_url, refund_notify_url, status)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         notify_url, refund_notify_url, profit_sharing_required, status)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, id, tenantId, request.channel(), request.merchantId(), request.applicationId(),
-                    request.secretReference(), request.notifyUrl(), request.refundNotifyUrl(), request.status());
+                    request.secretReference(), request.notifyUrl(), request.refundNotifyUrl(),
+                    request.profitSharingRequired(), request.status());
             MerchantChannelView view = new MerchantChannelView(id, request.channel(), request.merchantId(),
                     request.applicationId(), request.secretReference(), request.notifyUrl(),
-                    request.refundNotifyUrl(), request.status(), 0);
+                    request.refundNotifyUrl(), request.profitSharingRequired(), request.status(), 0);
             audit.record("MERCHANT_CHANNEL_CREATED", "merchant_channel", id, null, view);
             return view;
         });
@@ -107,11 +109,12 @@ final class FinanceAdminController {
             MerchantChannelView before = merchantChannel(tenantId, channelId);
             int changed = jdbc.update("""
                     update merchant_channel
-                       set secret_reference=?, notify_url=?, refund_notify_url=?, status=?,
+                       set secret_reference=?, notify_url=?, refund_notify_url=?,
+                           profit_sharing_required=?, status=?,
                            updated_at=now(), version=version+1
                      where tenant_id=? and id=? and version=?
-                    """, request.secretReference(), request.notifyUrl(), request.refundNotifyUrl(), request.status(),
-                    tenantId, channelId, request.version());
+                    """, request.secretReference(), request.notifyUrl(), request.refundNotifyUrl(),
+                    request.profitSharingRequired(), request.status(), tenantId, channelId, request.version());
             if (changed != 1) throw new DomainException("Merchant channel was modified by another operator");
             MerchantChannelView after = merchantChannel(tenantId, channelId);
             audit.record("MERCHANT_CHANNEL_UPDATED", "merchant_channel", channelId, before, after);
@@ -583,13 +586,14 @@ final class FinanceAdminController {
     private MerchantChannelView merchantChannel(UUID tenantId, UUID channelId) {
         return jdbc.query("""
                 select id, channel, merchant_id, application_id, secret_reference, notify_url,
-                       refund_notify_url, status, version
+                       refund_notify_url, profit_sharing_required, status, version
                   from merchant_channel where tenant_id=? and id=?
                 """, (result, row) -> new MerchantChannelView(
                 result.getObject("id", UUID.class), result.getString("channel"), result.getString("merchant_id"),
                 result.getString("application_id"), result.getString("secret_reference"),
                 result.getString("notify_url"), result.getString("refund_notify_url"),
-                result.getString("status"), result.getLong("version")), tenantId, channelId).stream().findFirst()
+                result.getBoolean("profit_sharing_required"), result.getString("status"),
+                result.getLong("version")), tenantId, channelId).stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Merchant channel does not exist"));
     }
 
@@ -639,12 +643,13 @@ final class FinanceAdminController {
                                   @NotBlank @Pattern(regexp = "env:[A-Z][A-Z0-9_]{1,80}") String secretReference,
                                   @NotBlank @Size(max = 500) @Pattern(regexp = "https://.+") String notifyUrl,
                                   @NotBlank @Size(max = 500) @Pattern(regexp = "https://.+") String refundNotifyUrl,
+                                  @NotNull Boolean profitSharingRequired,
                                   @NotBlank String status) { }
     record UpdateMerchantChannelRequest(
             @NotBlank @Pattern(regexp = "env:[A-Z][A-Z0-9_]{1,80}") String secretReference,
             @NotBlank @Size(max = 500) @Pattern(regexp = "https://.+") String notifyUrl,
             @NotBlank @Size(max = 500) @Pattern(regexp = "https://.+") String refundNotifyUrl,
-            @NotBlank String status, @Min(0) long version) { }
+            @NotNull Boolean profitSharingRequired, @NotBlank String status, @Min(0) long version) { }
     record WalletAdjustmentRequest(@NotNull UUID customerId, @NotBlank String direction,
                                    @Min(1) long amountMinor, @NotBlank @Size(max = 500) String reason) { }
     record PaymentForRefund(UUID id, UUID orderId, String channel, String providerTransactionNo,
@@ -658,7 +663,7 @@ final class FinanceAdminController {
     record WalletBalance(UUID id, long balanceMinor) { }
     record MerchantChannelView(UUID id, String channel, String merchantId, String applicationId,
                                String secretReference, String notifyUrl, String refundNotifyUrl,
-                               String status, long version) { }
+                               boolean profitSharingRequired, String status, long version) { }
     record PaymentView(UUID id, UUID orderId, String orderNo, String channel, String transactionType,
                        String merchantOrderNo, String providerTransactionNo, long amountMinor,
                        String currency, String status, Instant createdAt, Instant completedAt) { }

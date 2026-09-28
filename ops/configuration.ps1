@@ -63,6 +63,7 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'WECHAT_PRIMARY_MERCHANT_SERIAL' 'WeChat payment' $false $false '' '' 'Merchant API certificate serial number'
     New-ConfigurationDefinition 'WECHAT_PRIMARY_API_V3_KEY' 'WeChat payment' $false $true '' '' 'WeChat Pay APIv3 key'
     New-ConfigurationDefinition 'WECHAT_PRIMARY_PUBLIC_KEY_ID' 'WeChat payment' $false $false '' '' 'WeChat Pay public-key ID'
+    New-ConfigurationDefinition 'PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS' 'WeChat payment' $true $false '3000' '' 'Provider-approved maximum profit-sharing ratio in basis points'
 
     New-ConfigurationDefinition 'DEVICE_GATEWAY_ENABLED' 'Device gateway' $true $false 'false' '' 'Start the device long-connection gateway'
     New-ConfigurationDefinition 'DEVICE_GATEWAY_BIND_ADDRESS' 'Device gateway' $true $false '127.0.0.1' '' 'Device gateway bind address'
@@ -468,11 +469,16 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_INVITATION_LIFESPAN_HOURS', 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS')) {
+    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_INVITATION_LIFESPAN_HOURS', 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS', 'PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS')) {
         $number = 0
         if (-not [int]::TryParse([string]$Values[$name], [ref]$number) -or $number -lt 1) {
             $errors.Add("$($name): value must be a positive integer")
         }
+    }
+    $profitSharingLimit = 0
+    if ([int]::TryParse([string]$Values['PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS'], [ref]$profitSharingLimit) -and
+            $profitSharingLimit -gt 10000) {
+        $errors.Add('PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS: value cannot exceed 10000 basis points')
     }
     $sampleRate = 0.0
     if (-not [double]::TryParse([string]$Values['TRACING_SAMPLE_RATE'], [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$sampleRate) -or $sampleRate -lt 0 -or $sampleRate -gt 1) {
