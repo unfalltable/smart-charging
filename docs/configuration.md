@@ -13,57 +13,59 @@
 .\config-manager.cmd credentials
 ```
 
-- `init`：创建或无损补全配置，内部密码和主密钥使用密码学安全随机数生成。
-- `wizard`：交互填写真实外部信息；秘密输入不回显，直接回车保留已有值。
+- `init`：创建或无损补全配置，密码和主密钥使用密码学安全随机数生成。
+- `wizard`：交互修改真实外部信息；秘密输入不回显，直接回车保留已有值。
 - `status`：按分类显示配置状态，秘密只显示末四位。
-- `validate`：检查全部基础配置以及所有已启用能力；任何错误都会以非零状态退出。
+- `validate`：检查基础配置和所有已启用能力；任何错误都会以非零状态退出。
 - `export-miniapp`：从统一配置生成 Git 忽略的小程序部署文件。
-- `credentials`：仅在明确执行时显示自托管身份服务的初始平台登录和 Keycloak 管理凭据；首次登录后应修改临时密码。
+- `credentials`：仅在明确执行时显示数据库身份模式的初始平台登录；首次登录后必须改密，原始配置密码不会覆盖已修改的数据库密码。
 
 `docker-start.cmd` 启动前会自动执行同一套校验，不会用假地址、默认账号、模拟支付或测试租户绕过缺失配置。
+
+## 身份模式
+
+默认 `IDENTITY_PROVIDER_MODE=database`，管理端使用常规用户名和密码：
+
+- `PLATFORM_ADMIN_SUBJECT`、`PLATFORM_ADMIN_USERNAME`、`PLATFORM_ADMIN_PASSWORD` 由 `init` 随机生成；
+- 平台超级管理员明确保存在 `platform_user`，不属于任何下游租户；
+- 首次登录只允许修改临时密码，改密后才签发完整管理权限；
+- 密码使用自描述的 bcrypt 散列，连续失败会锁定，访问令牌短期有效，刷新令牌轮换并检测复用；
+- 退出、改密、停用或管理员重置密码后，现有管理会话立即失效；
+- 平台超级管理员创建租户和首位租户管理员，租户管理员再创建员工账号；管理后台不开放匿名注册。
+
+需要企业统一身份时可在向导中切换到 `IDENTITY_PROVIDER_MODE=external`。此时必须提供：
+
+- `OIDC_ISSUER_URI`：身份平台签发者地址，服务端用它发现公钥并校验令牌；
+- `VITE_OIDC_AUTHORIZATION_ENDPOINT`：浏览器授权地址；
+- `VITE_OIDC_TOKEN_ENDPOINT`：Authorization Code + PKCE 换取令牌的地址；
+- `VITE_OIDC_CLIENT_ID`：管理端 public client 标识，不是 secret；
+- `VITE_OIDC_REDIRECT_URI`、`VITE_OIDC_SCOPES`：登录回调和申请范围。
+
+外部模式下账号创建、密码恢复和 MFA 由外部身份平台负责，本系统只保存其真实 subject 与租户岗位关系。
 
 ## 配置分类
 
 | 分类 | 配置项 | 来源或用途 |
 |---|---|---|
-| 核心秘密 | `POSTGRES_PASSWORD`、`VALKEY_PASSWORD`、`QR_SIGNING_SECRET`、`DEVICE_CREDENTIAL_MASTER_KEY_BASE64`、`AUTH_JWT_SECRET_BASE64` | `init` 自动生成；不得提交、共享或在日志中输出 |
-| 身份模式 | `IDENTITY_PROVIDER_MODE` | `bundled` 使用随 Docker 启动的 Keycloak；`external` 接入企业现有 OIDC |
-| OIDC 身份 | `APP_JWT_ISSUER`、`OIDC_ISSUER_URI`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS` | 服务端令牌签发、第三方令牌校验和跨域白名单 |
-| 管理端登录 | `VITE_OIDC_AUTHORIZATION_ENDPOINT`、`VITE_OIDC_TOKEN_ENDPOINT`、`VITE_OIDC_CLIENT_ID`、`VITE_OIDC_REDIRECT_URI`、`VITE_OIDC_SCOPES` | 管理端 Authorization Code + PKCE；客户端必须是 public client，不保存 client secret |
-| 自托管身份 | `KEYCLOAK_*`、`PLATFORM_ADMIN_*`、`INITIAL_TENANT_ID` | Keycloak 镜像、独立数据库秘密、初始管理员和首个真实租户预留标识；秘密由 `init` 随机生成 |
-| 账号邀请 | `IDENTITY_INVITATION_REDIRECT_URI`、`IDENTITY_INVITATION_LIFESPAN_HOURS` | 邀请完成后的后台地址与邀请有效期；本机自动派生回环地址 |
-| 身份邮件 | `IDENTITY_EMAIL_ENABLED`、`IDENTITY_SMTP_*` | 启用后使用真实 SMTP 发送验证、首登改密和恢复邮件；密码只写入 Git 忽略的部署配置 |
+| 核心秘密 | `POSTGRES_PASSWORD`、`VALKEY_PASSWORD`、`QR_SIGNING_SECRET`、`DEVICE_CREDENTIAL_MASTER_KEY_BASE64`、`AUTH_JWT_SECRET_BASE64` | `init` 自动生成；不得提交、共享或写入日志 |
+| 身份模式 | `IDENTITY_PROVIDER_MODE`、`APP_JWT_ISSUER`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS` | 内置账号或外部 OIDC、平台令牌签发和跨域白名单 |
+| 平台管理员 | `PLATFORM_ADMIN_SUBJECT`、`PLATFORM_ADMIN_USERNAME`、`PLATFORM_ADMIN_PASSWORD`、`PLATFORM_ADMIN_DISPLAY_NAME`、`PLATFORM_ADMIN_EMAIL` | 初始化数据库中的唯一平台超级管理员；初始密码只用于首次登录 |
+| 外部 OIDC | `OIDC_*`、`VITE_OIDC_*` | 仅在 `external` 模式必填 |
+| 账号有效期 | `IDENTITY_INVITATION_LIFESPAN_HOURS` | 租户员工临时账号的有效期 |
 | 微信身份 | `WECHAT_IDENTITY_ENABLED`、`WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_TENANT_CODE` | 有真实小程序资质后启用 |
-| 微信通知 | `WECHAT_NOTIFICATION_ENABLED`、`WECHAT_NOTIFICATION_TEMPLATES_JSON` | 通知类型到微信订阅消息模板的映射；依赖微信身份配置 |
-| 微信支付 | `WECHAT_PAYMENT_ENABLED`、`WECHAT_PAYMENT_DIRECTORY`、`WECHAT_PRIMARY_MERCHANT_SERIAL`、`WECHAT_PRIMARY_API_V3_KEY`、`WECHAT_PRIMARY_PUBLIC_KEY_ID` | 密钥目录还必须包含 `merchant-private-key.pem` 和 `wechat-pay-public-key.pem` |
-| 设备网关 | `DEVICE_GATEWAY_ENABLED`、`DEVICE_GATEWAY_BIND_ADDRESS`、`DEVICE_TLS_DIRECTORY` | 启用后证书目录必须包含 `tls.crt`、`tls.key`、`ca.crt` |
-| 小程序三环境 | `MINIAPP_DEVELOP_*`、`MINIAPP_TRIAL_*`、`MINIAPP_RELEASE_*` | 每套包含 HTTPS API、租户编码和订阅模板 ID 数组 |
-| 本机端口 | `ADMIN_WEB_PORT`、`CORE_PORT`、`KEYCLOAK_PORT`、`DEVICE_GATEWAY_PORT`、`DEVICE_MANAGEMENT_PORT`、`POSTGRES_PORT`、`VALKEY_PORT`、`NATS_PORT`、`NATS_MONITOR_PORT` | 校验范围和端口冲突 |
+| 微信通知 | `WECHAT_NOTIFICATION_ENABLED`、`WECHAT_NOTIFICATION_TEMPLATES_JSON` | 通知类型到微信订阅消息模板的映射 |
+| 微信支付 | `WECHAT_PAYMENT_ENABLED`、`WECHAT_PAYMENT_DIRECTORY`、`WECHAT_PRIMARY_*` | 真实商户 APIv3 密钥和只读证书目录 |
+| 设备网关 | `DEVICE_GATEWAY_ENABLED`、`DEVICE_GATEWAY_BIND_ADDRESS`、`DEVICE_TLS_DIRECTORY` | 启用后目录必须包含 `tls.crt`、`tls.key`、`ca.crt` |
+| 小程序三环境 | `MINIAPP_DEVELOP_*`、`MINIAPP_TRIAL_*`、`MINIAPP_RELEASE_*` | HTTPS API、租户编码和订阅模板 ID |
+| 本机端口 | `ADMIN_WEB_PORT`、`CORE_PORT`、`DEVICE_GATEWAY_PORT`、`DEVICE_MANAGEMENT_PORT`、`POSTGRES_PORT`、`VALKEY_PORT`、`NATS_PORT`、`NATS_MONITOR_PORT` | 校验范围和端口冲突 |
 | 性能参数 | `DATABASE_POOL_*`、`ACCESS_TOKEN_MINUTES`、`REFRESH_TOKEN_DAYS`、`RATE_LIMIT_*`、`TRACING_SAMPLE_RATE`、`OUTBOX_PUBLISHER_DELAY_MS`、`APPLICATION_LOG_LEVEL` | Docker 和服务端使用同一份值 |
-
-默认 `IDENTITY_PROVIDER_MODE=bundled` 时，下面四项会从 Keycloak 端口、Realm 和客户端配置自动派生；不要手工改它们。只有 `external` 模式才需要向身份平台管理员取得这些信息：
-
-- `OIDC_ISSUER_URI` 是身份平台的签发者地址，服务端用它发现公钥并校验令牌。
-- `VITE_OIDC_AUTHORIZATION_ENDPOINT` 是浏览器跳转登录的地址。
-- `VITE_OIDC_TOKEN_ENDPOINT` 是管理端用授权码和 PKCE 换令牌的地址。
-- `VITE_OIDC_CLIENT_ID` 是在身份平台给管理端创建的 public client 标识，不是用户名，也不是 secret。
-
-`OIDC_JWK_SET_URI` 是容器网络内读取签名公钥的地址，用来解决浏览器访问地址与容器访问地址不同的问题。它不是账号或密钥。自托管模式自动生成；外部模式通常留空，由服务端通过 Issuer 发现公钥。
-
-默认不启用 SMTP，本机通过管理后台只显示一次随机临时密码。生产应运行 `config-manager.cmd wizard` 启用真实 SMTP；配置校验会同时要求主机、端口、已验证发件地址、用户名和密码。启动器会对已有 Keycloak 数据卷幂等补齐账号管理最小权限、`platform_admin`、MFA、密码策略和登录事件记录，因此升级不依赖重新删除数据库。
 
 ## 不放在部署文件里的业务配置
 
-以下内容属于租户业务数据，必须通过受控开通接口或管理后台写入数据库，而不是写入 `.env.docker`：
-
-- 租户、管理员和员工成员关系；
-- 场站、设备、端口和设备凭据；
-- 费率、营业规则、协议和告警规则；
-- 微信商户号、AppID、回调地址、通道启停和 `secret_reference`；
-- 订单、充电会话、计量、支付、退款、账务和对账记录。
-
-本机首个微信支付通道的 `secret_reference` 使用 `env:WECHAT_PRIMARY`，实际秘密来自统一部署配置和只读密钥目录。新增多个商户时，生产环境应由秘密管理服务注入各自前缀，不能把私钥写入数据库。
+租户、员工成员关系、渠道组织、场站、设备、端口、费率、商户通道、订单、支付、退款和结算都是生产业务数据，必须通过管理后台或受控接口写入数据库，不能写进 `.env.docker`。仓库及初始化流程不会创建这些数据。
 
 ## 生产环境要求
 
-`.env.docker` 和内置 Keycloak 适合本机闭环验收与受控单机环境。规模化生产仍沿用相同变量名和 OIDC 协议，但 Keycloak 至少需要可信 HTTPS、受管 PostgreSQL、备份恢复、MFA、监控和多实例高可用；秘密应由云秘密管理、Docker Secret 或编排平台 Secret 注入。公开域名、小程序 API、支付回调和设备入口必须使用可信 HTTPS/TLS；只有本机回环开发地址允许 HTTP。
+单机 `.env.docker` 只适合本机验收或受控小规模部署。正式环境应使用云秘密管理、Docker Secret 或编排平台 Secret 注入；PostgreSQL、Valkey 与 NATS 应按容量做高可用、备份恢复和监控。公开域名、小程序 API、支付回调和设备入口必须使用可信 HTTPS/TLS，只有本机回环开发地址允许 HTTP。
+
+内置数据库账号可以继续用于生产，但生产发布必须启用 HTTPS、妥善保护 JWT 与数据库秘密、审计管理员操作并完成账号锁定/恢复演练。组织已有统一身份、需要强制 MFA 或集中离职回收时，再切换外部 OIDC，无需改变业务数据模型。

@@ -13,7 +13,7 @@ final class ExternalIdentityAdminGateway implements IdentityAdminGateway {
 
     @Override
     public Capabilities capabilities() {
-        return new Capabilities(false, false, false, 0);
+        return new Capabilities(false, false, false, false, 0);
     }
 
     @Override

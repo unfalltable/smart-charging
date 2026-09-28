@@ -48,9 +48,6 @@ class TokenConfiguration {
         if (properties.appIssuer() == null || properties.appIssuer().isBlank()) {
             throw new IllegalStateException("APP_JWT_ISSUER is required");
         }
-        if (properties.oidcIssuerUri() == null || properties.oidcIssuerUri().isBlank()) {
-            throw new IllegalStateException("OIDC_ISSUER_URI is required");
-        }
         if (properties.apiAudience() == null || properties.apiAudience().isBlank()) {
             throw new IllegalStateException("API_JWT_AUDIENCE is required");
         }
@@ -61,6 +58,12 @@ class TokenConfiguration {
                         "invalid_token", "Required audience is missing", null));
         application.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(properties.appIssuer()), audience));
+        if ("database".equalsIgnoreCase(properties.identityProviderMode())) {
+            return application;
+        }
+        if (properties.oidcIssuerUri() == null || properties.oidcIssuerUri().isBlank()) {
+            throw new IllegalStateException("OIDC_ISSUER_URI is required when external identity is enabled");
+        }
         NimbusJwtDecoder oidc = properties.oidcJwkSetUri() == null || properties.oidcJwkSetUri().isBlank()
                 ? (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(properties.oidcIssuerUri())
                 : NimbusJwtDecoder.withJwkSetUri(properties.oidcJwkSetUri()).build();

@@ -70,7 +70,8 @@ final class AccessManagementController {
                     "Create the user in the external identity provider, then link its OIDC subject here");
         }
         UUID tenantId = TenantContext.requireTenantId();
-        boolean requireMfa = Boolean.TRUE.equals(request.requireMfa()) || MFA_REQUIRED_ROLES.contains(request.roleCode());
+        boolean requireMfa = identity.capabilities().mfaSupported()
+                && (Boolean.TRUE.equals(request.requireMfa()) || MFA_REQUIRED_ROLES.contains(request.roleCode()));
         Instant expiresAt = Instant.now().plus(request.expiresInHours(), ChronoUnit.HOURS);
         IdentityAdminGateway.ProvisionedIdentity provisioned = identity.provision(
                 new IdentityAdminGateway.ProvisionIdentity(request.username(), request.email(),
@@ -116,7 +117,7 @@ final class AccessManagementController {
         }
         String delivery = "TEMPORARY_PASSWORD";
         String temporaryPassword = provisioned.temporaryPassword();
-        if (!provisioned.created()) {
+        if (!provisioned.created() && provisioned.temporaryPassword() == null) {
             delivery = "EXISTING_ACCOUNT";
             temporaryPassword = null;
         } else if (identity.capabilities().emailDelivery()) {
@@ -132,13 +133,13 @@ final class AccessManagementController {
         return new InvitationResult(membership, delivery, temporaryPassword);
     }
 
-    /** Links an account owned by an external OIDC provider. Bundled identity deployments use invitations. */
+    /** Links an account owned by an external OIDC provider. Built-in identity uses account creation. */
     @PostMapping("/memberships")
     @ResponseStatus(HttpStatus.CREATED)
     MembershipView createExternalMembership(@Valid @RequestBody MembershipRequest request) {
         requireRole(request.roleCode());
         if (identity.capabilities().managedLifecycle()) {
-            throw new DomainException("Use the account invitation workflow for the bundled identity provider");
+            throw new DomainException("Use the account creation workflow for built-in identity");
         }
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {

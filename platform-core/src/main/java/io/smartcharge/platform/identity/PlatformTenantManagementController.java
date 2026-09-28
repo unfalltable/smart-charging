@@ -89,7 +89,8 @@ final class PlatformTenantManagementController {
         UUID requestedTenantId = UUID.randomUUID();
         IdentityAdminGateway.ProvisionedIdentity account = identity.provision(
                 new IdentityAdminGateway.ProvisionIdentity(request.adminUsername(), request.adminEmail(),
-                        request.adminDisplayName(), requestedTenantId, "TENANT_ADMIN", true));
+                        request.adminDisplayName(), requestedTenantId, "TENANT_ADMIN",
+                        identity.capabilities().mfaSupported()));
         TenantProvisioningController.ProvisionedTenant tenant;
         try {
             tenant = provisioning.create(new TenantProvisioningController.ProvisionTenantRequest(
@@ -102,9 +103,10 @@ final class PlatformTenantManagementController {
                 jdbc.update("""
                         update platform_user
                            set username=?, email=?, display_name=?, identity_managed=true,
-                               mfa_required=true, status='ACTIVE', updated_at=now(), version=version+1
+                               mfa_required=?, status='ACTIVE', updated_at=now(), version=version+1
                          where subject=?
-                        """, account.username(), account.email(), request.adminDisplayName(), account.subject());
+                        """, account.username(), account.email(), request.adminDisplayName(),
+                        identity.capabilities().mfaSupported(), account.subject());
                 jdbc.update("""
                         update tenant_membership
                            set invited_at=now(), invite_expires_at=?, accepted_at=null, invited_by=?,
@@ -122,7 +124,7 @@ final class PlatformTenantManagementController {
         }
         String delivery = "TEMPORARY_PASSWORD";
         String temporaryPassword = account.temporaryPassword();
-        if (!account.created()) {
+        if (!account.created() && account.temporaryPassword() == null) {
             delivery = "EXISTING_ACCOUNT";
             temporaryPassword = null;
         } else if (identity.capabilities().emailDelivery()) {
@@ -131,7 +133,8 @@ final class PlatformTenantManagementController {
                 delivery = "EMAIL";
                 temporaryPassword = null;
             } catch (ServiceUnavailableException emailFailure) {
-                temporaryPassword = identity.resetTemporaryPassword(account.subject(), true, false);
+                temporaryPassword = identity.resetTemporaryPassword(account.subject(),
+                        identity.capabilities().mfaSupported(), false);
                 delivery = "TEMPORARY_PASSWORD_FALLBACK";
             }
         }

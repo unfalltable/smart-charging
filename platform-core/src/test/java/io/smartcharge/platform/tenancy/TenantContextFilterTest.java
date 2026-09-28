@@ -22,9 +22,9 @@ class TenantContextFilterTest {
 
     @Test
     void platformAdministratorCanSelectTheDatabaseTenantWhenTheTokenClaimIsStale() throws Exception {
-        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority("bundled", "platform-admin"));
+        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority());
         SecurityContextHolder.getContext().setAuthentication(
-                PlatformAuthorityTest.authentication("platform-admin", false));
+                PlatformAuthorityTest.authentication("platform-admin", true));
         MockHttpServletRequest request = request(DATABASE_TENANT);
         MockHttpServletResponse response = new MockHttpServletResponse();
         AtomicReference<UUID> tenantInChain = new AtomicReference<>();
@@ -39,7 +39,7 @@ class TenantContextFilterTest {
 
     @Test
     void ordinaryUserCannotSelectATenantMissingFromTheVerifiedClaim() throws Exception {
-        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority("bundled", "platform-admin"));
+        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority());
         SecurityContextHolder.getContext().setAuthentication(
                 PlatformAuthorityTest.authentication("operator", false));
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -51,7 +51,7 @@ class TenantContextFilterTest {
 
     @Test
     void platformControlPlaneDoesNotRequireATenantHeader() throws Exception {
-        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority("bundled", "platform-admin"));
+        TenantContextFilter filter = new TenantContextFilter(new PlatformAuthority());
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/platform/tenants");
         MockHttpServletResponse response = new MockHttpServletResponse();
         AtomicReference<Boolean> invoked = new AtomicReference<>(false);

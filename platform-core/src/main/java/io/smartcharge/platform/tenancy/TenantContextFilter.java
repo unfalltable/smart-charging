@@ -19,7 +19,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public final class TenantContextFilter extends OncePerRequestFilter {
     private static final String TENANT_HEADER = "X-Tenant-Id";
     private static final Set<String> TENANT_FREE_PREFIXES = Set.of(
-            "/actuator/", "/internal/", "/api/v1/public/", "/api/v1/auth/miniapp/");
+            "/actuator/", "/internal/", "/api/v1/public/", "/api/v1/auth/miniapp/",
+            "/api/v1/auth/admin/");
     private final PlatformAuthority platformAuthority;
 
     public TenantContextFilter(PlatformAuthority platformAuthority) {

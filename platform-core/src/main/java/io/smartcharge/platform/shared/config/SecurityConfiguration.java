@@ -42,6 +42,7 @@ class SecurityConfiguration {
                                            RequestContextFilter requestContextFilter,
                                            DistributedRateLimitFilter rateLimitFilter,
                                            TenantAccessFilter tenantAccessFilter,
+                                           AdminAccountStatusFilter adminAccountStatusFilter,
                                            JwtDecoder jwtDecoder,
                                            Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
                                            @Qualifier("corsConfigurationSource") CorsConfigurationSource cors)
@@ -59,9 +60,11 @@ class SecurityConfiguration {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/api/v1/public/**",
                                 "/api/v1/auth/miniapp/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/admin/login",
+                                "/api/v1/auth/admin/refresh").permitAll()
                         .requestMatchers("/internal/**").hasAuthority("SCOPE_internal")
                         .requestMatchers("/api/v1/platform/**")
-                            .hasAnyAuthority("SCOPE_platform_admin", "SCOPE_admin")
+                            .hasAuthority("SCOPE_platform_admin")
                         .requestMatchers(HttpMethod.GET, "/api/v1/admin/organizations/**")
                             .hasAnyAuthority("SCOPE_admin", "SCOPE_operator", "SCOPE_finance")
                         .requestMatchers("/api/v1/admin/organizations/**").hasAuthority("SCOPE_admin")
@@ -82,7 +85,8 @@ class SecurityConfiguration {
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.decoder(jwtDecoder)
                         .jwtAuthenticationConverter(jwtAuthenticationConverter)))
                 .addFilterBefore(requestContextFilter, BearerTokenAuthenticationFilter.class)
-                .addFilterAfter(rateLimitFilter, BearerTokenAuthenticationFilter.class)
+                .addFilterAfter(adminAccountStatusFilter, BearerTokenAuthenticationFilter.class)
+                .addFilterAfter(rateLimitFilter, AdminAccountStatusFilter.class)
                 .addFilterAfter(tenantFilter, DistributedRateLimitFilter.class)
                 .addFilterAfter(tenantAccessFilter, TenantContextFilter.class)
                 .build();
@@ -90,9 +94,7 @@ class SecurityConfiguration {
 
     @Bean
     Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter(
-            @Value("${charging.security.provisioning-client-id:}") String provisioningClientId,
-            @Value("${charging.security.identity-provider-mode:external}") String identityProviderMode,
-            @Value("${charging.security.initial-admin-username:}") String platformAdminUsername) {
+            @Value("${charging.security.provisioning-client-id:}") String provisioningClientId) {
         JwtGrantedAuthoritiesConverter standardScopes = new JwtGrantedAuthoritiesConverter();
         return jwt -> {
             Set<GrantedAuthority> authorities = new LinkedHashSet<>(standardScopes.convert(jwt));
@@ -107,11 +109,6 @@ class SecurityConfiguration {
             String authorizedParty = jwt.getClaimAsString("azp");
             if (!provisioningClientId.isBlank() && provisioningClientId.equals(authorizedParty)) {
                 authorities.add(new SimpleGrantedAuthority("SCOPE_internal"));
-            }
-            String username = jwt.getClaimAsString("preferred_username");
-            if ("bundled".equals(identityProviderMode) && !platformAdminUsername.isBlank()
-                    && platformAdminUsername.equals(username)) {
-                authorities.add(new SimpleGrantedAuthority("SCOPE_admin"));
             }
             return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
         };
@@ -158,6 +155,14 @@ class SecurityConfiguration {
     @Bean
     FilterRegistrationBean<TenantAccessFilter> disableTenantAccessContainerRegistration(TenantAccessFilter filter) {
         FilterRegistrationBean<TenantAccessFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    FilterRegistrationBean<AdminAccountStatusFilter> disableAdminAccountStatusContainerRegistration(
+            AdminAccountStatusFilter filter) {
+        FilterRegistrationBean<AdminAccountStatusFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }

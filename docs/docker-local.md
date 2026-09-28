@@ -1,17 +1,10 @@
 # Docker 空库部署
 
-这套 Compose 用于在单机上以生产鉴权行为验证系统。它启动 PostgreSQL、Valkey、NATS、Keycloak、核心 API 和管理后台，但不写入任何业务租户、场站、设备、费率、订单或支付记录。
+这套 Compose 用于在单机上以生产鉴权行为验证系统。它启动 PostgreSQL、Valkey、NATS、核心 API 和管理后台，不会写入任何业务租户、场站、设备、费率、订单或支付记录。
 
-## 必需条件
+## 启动
 
-- Docker Desktop 已启动。
-- Docker Desktop 能访问 Docker Hub 和 `quay.io`，或已经配置可用的镜像加速/代理。
-
-默认使用 Compose 内自托管的 Keycloak，不要求事先准备外部 OIDC。若切换到企业已有身份平台，该平台必须支持 Authorization Code + PKCE、配置正确的 audience、岗位角色和回调地址。
-
-## 配置和启动
-
-首次运行：
+电脑只需安装并启动 Docker Desktop，并能访问 Docker Hub 或已配置可用的镜像代理。首次运行：
 
 ```powershell
 .\config-manager.cmd init
@@ -19,73 +12,52 @@
 .\docker-start.cmd
 ```
 
-启动器会复用已经构建成功的本地 Keycloak 优化镜像，日常重启或更新业务代码时不会再次访问 `quay.io`。只有本机从未成功构建过该镜像时才需要连接官方 Keycloak 镜像仓库。
+默认使用内置数据库账号，不需要 Keycloak、外部 OIDC、Java、Maven 或 Node.js。`init` 会生成 Git 忽略的 `.env.docker`、服务秘密和唯一的平台超级管理员初始凭据。`validate` 会检查必填值、URL、端口、密钥、JSON、证书目录和已启用能力。
 
-`init` 生成 `.env.docker`、高强度随机秘密和 Git 忽略的 Keycloak Realm；`validate` 一次检查必填值、URL、端口、密钥长度、JSON、证书文件和已启用能力。原来缺少的以下四项在默认自托管模式中会自动生成，无须手填：
-
-- `OIDC_ISSUER_URI`
-- `VITE_OIDC_AUTHORIZATION_ENDPOINT`
-- `VITE_OIDC_TOKEN_ENDPOINT`
-- `VITE_OIDC_CLIENT_ID`
-
-要修改首个管理员名称、接入微信/支付/设备或切换外部 OIDC，再运行 `.\config-manager.cmd wizard`。运行 `.\config-manager.cmd status` 可以脱敏查看全部配置；只有显式运行 `.\config-manager.cmd credentials` 才会显示本机初始登录秘密。
-
-配置不完整时启动脚本会列出缺失项并停止。启动完成后：
-
-如果脚本报告检测到旧演示环境，先确认旧数据无需保留，再执行 `.\docker-stop.cmd -DeleteData`。该命令会删除旧 PostgreSQL、Valkey、NATS 数据卷和旧秘密文件，随后启动会创建全新的空库。
+启动完成后的本机地址：
 
 | 服务 | 地址 |
 |---|---|
 | 管理后台 | `http://127.0.0.1:8088/` |
 | 反向代理 API | `http://127.0.0.1:8088/api/v1` |
 | 核心健康检查 | `http://127.0.0.1:18080/actuator/health` |
-| 身份服务 | `http://127.0.0.1:19090/` |
 
-## 登录并开通真实租户
+## 首次登录与账号分配
 
-读取一次由本机配置管理器生成的初始平台总管理员凭据：
+读取初始平台超级管理员凭据：
 
 ```powershell
 .\config-manager.cmd credentials
 ```
 
-打开管理后台，用临时密码登录并完成改密、动态口令绑定。平台总管理员无需先绑定某个租户即可进入“平台与租户”，创建真实下游租户和首位租户管理员。租户管理员登录后在“账号与权限”邀请员工、分配岗位、冻结/恢复成员、重发邀请、恢复密码，或在员工遗失验证器时撤销旧 MFA 并强制重新绑定。管理员/财务强制 MFA，邀请有有效期，冻结和账号恢复都会立即撤销登录会话；所有变更写入审计日志。
+打开管理后台，使用临时密码登录并立即设置新密码。平台超级管理员不属于任何下游租户，可进入“平台与租户”创建真实运营商和首位租户管理员。租户管理员随后在“账号与权限”创建员工并分配运营、财务、审计或客服岗位。
 
-默认没有 SMTP 时，界面只显示一次随机临时密码，必须通过独立安全渠道交给被邀请人。运行 `config-manager.cmd wizard` 配置真实 SMTP 后，Keycloak 会发送有时效的验证、改密和 MFA 引导邮件。邮件失败时系统自动降级生成一次性临时密码，不会创建不可登录的账号。
+管理后台故意不开放匿名注册：消费者注册属于微信/支付宝小程序链路，运营后台账号必须由上级管理员分配，防止访客自行取得业务权限。新建或重置账号时，随机临时密码只显示一次，需通过独立安全渠道交付。
 
-`ops/provision-tenant.ps1` 仍用于 CI/自动化或外部 OIDC 受控开通。它通过只允许内部接口的服务身份工作，不是匿名注册入口。
+如需脚本化开通，可在平台管理员完成首次改密后运行：
 
-外部 OIDC 模式不保存外部客户端秘密；人员创建、邮件、MFA 和密码恢复由外部身份平台负责，管理后台只关联其真实 OIDC subject。自动开通仍需在当前 PowerShell 会话提供带 `SCOPE_internal` 的真实服务令牌，并传入 `-AdminSubject` 和 `-AdminDisplayName`。
+```powershell
+$platformPassword = Read-Host '平台管理员当前密码' -AsSecureString
+.\ops\provision-tenant.ps1 -TenantCode east-region -TenantDisplayName '华东运营商' `
+  -AdminUsername east-admin -AdminEmail admin@example.com -AdminDisplayName '华东管理员' `
+  -PlatformPassword $platformPassword
+Remove-Variable platformPassword
+```
 
-## 接入真实设备
+也可省略 `-PlatformPassword`，脚本会安全提示输入且不回显。日常使用建议直接在管理后台开通。
 
-1. 根据厂家协议实现并验收协议适配器。
-2. 在管理后台创建真实场站和设备，填写设备实际端口数及额定功率。
-3. 轮换设备凭据，并通过安全通道写入实体设备。
-4. 准备 `tls.crt`、`tls.key`、`ca.crt`，通过配置向导填写目录并启用设备网关。
-5. 运行 `.\config-manager.cmd validate` 和 `.\docker-start.cmd`。
+## 数据与升级
 
-网关不接受明文生产连接，也没有内置设备编码或固定密钥。
-
-## 微信小程序和支付
-
-取得真实微信资质后：
-
-1. 在配置向导中启用微信身份，填写 AppID、AppSecret 和真实租户编码。
-2. 配置微信支付证书目录、APIv3 密钥等秘密，再在管理后台创建微信商户通道并引用 `env:WECHAT_PRIMARY`。
-3. 在配置向导中填写小程序对应版本的真实 HTTPS API 地址和租户编码；工具自动生成本机部署配置。
-4. 使用实体设备和微信支付环境执行下单、启动、计量、停止、结算、支付、退款和对账验收。
-
-系统没有“支付成功”模拟接口，支付状态只能由验签回调或支付平台主动查询推进。
-
-## 数据清理
-
-`.\docker-stop.cmd` 只停止容器并保留数据。只有确认不需要数据时才能执行：
+`.\docker-stop.cmd` 只停止容器并保留数据。只有确认本机数据不再需要时才能执行：
 
 ```powershell
 .\docker-stop.cmd -DeleteData
 ```
 
-该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷以及本机秘密文件，无法恢复。
+该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷以及 `.env.docker`，无法恢复。旧版 `IDENTITY_PROVIDER_MODE=bundled` 配置在更新后会自动迁移为 `database`，并生成符合新策略的平台初始密码；业务数据卷不会因此自动删除。
 
-全部字段及生产环境的秘密管理边界见 [统一配置管理](configuration.md)。
+## 真实设备、微信和支付
+
+设备网关默认关闭。准备厂家协议适配器及 `tls.crt`、`tls.key`、`ca.crt` 后，通过配置向导启用。取得真实微信资质后，再配置小程序 AppID/AppSecret、支付 APIv3 密钥与证书、订阅消息模板和正式 HTTPS 地址。系统没有模拟支付成功接口，交易状态只能由验签回调或支付平台主动查询推进。
+
+完整字段和生产秘密管理边界见 [统一配置管理](configuration.md)。单机 Compose 不是公网高可用方案，正式上线门禁见 [生产商用门禁](production-readiness.md)。

@@ -11,37 +11,27 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 
 class PlatformAuthorityTest {
     @Test
-    void recognizesTheConfiguredBundledAdministratorWithoutARealmRole() {
-        PlatformAuthority authority = new PlatformAuthority("bundled", "platform-admin");
+    void recognizesExplicitPlatformAuthority() {
+        PlatformAuthority authority = new PlatformAuthority();
 
-        assertThat(authority.isPlatformAdministrator(authentication("platform-admin", false))).isTrue();
+        assertThat(authority.isPlatformAdministrator(authentication("platform-admin", true))).isTrue();
     }
 
     @Test
     void doesNotElevateAnotherTenantAdminToPlatformAdministrator() {
-        PlatformAuthority authority = new PlatformAuthority("bundled", "platform-admin");
+        PlatformAuthority authority = new PlatformAuthority();
 
-        assertThat(authority.isPlatformAdministrator(authentication("tenant-admin", true))).isFalse();
+        assertThat(authority.isPlatformAdministrator(authentication("tenant-admin", false))).isFalse();
     }
 
     @Test
-    void neverElevatesAnExternalIdentityByUsername() {
-        PlatformAuthority authority = new PlatformAuthority("external", "platform-admin");
+    void neverElevatesAnIdentityByUsername() {
+        PlatformAuthority authority = new PlatformAuthority();
 
-        assertThat(authority.isPlatformAdministrator(authentication("platform-admin", true))).isFalse();
+        assertThat(authority.isPlatformAdministrator(authentication("platform-admin", false))).isFalse();
     }
 
-    @Test
-    void recognizesExplicitPlatformAuthorityForExternalIdentityProviders() {
-        PlatformAuthority authority = new PlatformAuthority("external", "");
-        JwtAuthenticationToken authentication = authentication("owner", false);
-        authentication = new JwtAuthenticationToken(authentication.getToken(),
-                List.of(new SimpleGrantedAuthority("SCOPE_platform_admin")), authentication.getName());
-
-        assertThat(authority.isPlatformAdministrator(authentication)).isTrue();
-    }
-
-    static JwtAuthenticationToken authentication(String username, boolean admin) {
+    static JwtAuthenticationToken authentication(String username, boolean platformAdministrator) {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "none")
                 .subject("verified-subject")
@@ -50,8 +40,8 @@ class PlatformAuthorityTest {
                 .claim("preferred_username", username)
                 .claim("tenant_ids", List.of("00000000-0000-0000-0000-000000000001"))
                 .build();
-        var authorities = admin
-                ? List.of(new SimpleGrantedAuthority("SCOPE_admin"))
+        var authorities = platformAdministrator
+                ? List.of(new SimpleGrantedAuthority("SCOPE_platform_admin"))
                 : List.<SimpleGrantedAuthority>of();
         return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
     }

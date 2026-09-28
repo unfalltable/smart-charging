@@ -9,7 +9,6 @@ $workspace = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $PSScriptRoot 'compose.local.yaml'
 . (Join-Path $PSScriptRoot 'configuration.ps1')
 . (Join-Path $PSScriptRoot 'http-response.ps1')
-. (Join-Path $PSScriptRoot 'reconcile-bundled-identity.ps1')
 
 $configurationState = Initialize-DeploymentConfiguration -Workspace $workspace
 $environmentFile = $configurationState.Path
@@ -22,12 +21,6 @@ if ($configurationErrors.Count -gt 0) {
     throw "Deployment configuration is invalid. Run config-manager.cmd wizard, then config-manager.cmd validate.`n - $($configurationErrors -join "`n - ")"
 }
 [void](Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $configuration)
-$bundledIdentityEnabled = [string]$configuration['IDENTITY_PROVIDER_MODE'] -eq 'bundled'
-if ($bundledIdentityEnabled) {
-    [void](Export-BundledIdentityConfiguration -Workspace $workspace -Values $configuration)
-    $identityDirectory = Resolve-ConfigurationDirectory -Workspace $workspace -ConfiguredPath ([string]$configuration['KEYCLOAK_IMPORT_DIRECTORY'])
-    [Environment]::SetEnvironmentVariable('KEYCLOAK_IMPORT_DIRECTORY', $identityDirectory, 'Process')
-}
 
 $paymentDirectory = Resolve-ConfigurationDirectory -Workspace $workspace -ConfiguredPath ([string]$configuration['WECHAT_PAYMENT_DIRECTORY'])
 if (-not (Test-Path -LiteralPath $paymentDirectory -PathType Container)) {
@@ -55,10 +48,6 @@ $buildRevision = $buildRevision.Trim()
 [Environment]::SetEnvironmentVariable('APP_BUILD_REVISION', $buildRevision, 'Process')
 
 $compose = @('compose', '--env-file', $environmentFile, '--file', $composeFile)
-$keycloakPort = [string]$configuration['KEYCLOAK_PORT']
-if ($bundledIdentityEnabled) {
-    $compose += @('--profile', 'bundled-identity')
-}
 $deviceGatewayEnabled = Get-ConfigurationBoolean -Values $configuration -Name 'DEVICE_GATEWAY_ENABLED'
 if ($deviceGatewayEnabled) {
     $compose += @('--profile', 'device')
@@ -67,35 +56,6 @@ Push-Location $workspace
 try {
     $buildServices = @('core', 'admin-web')
     if ($deviceGatewayEnabled) { $buildServices += 'device-gateway' }
-    if ($bundledIdentityEnabled) {
-        $keycloakImageId = @(& docker image ls --quiet --filter 'reference=smart-charging-local-keycloak:latest') |
-            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
-            Select-Object -First 1
-        if ([string]::IsNullOrWhiteSpace([string]$keycloakImageId)) {
-            $existingKeycloakContainer = @(& docker @compose ps --all --quiet keycloak 2>$null) |
-                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
-                Select-Object -First 1
-            if (-not [string]::IsNullOrWhiteSpace([string]$existingKeycloakContainer)) {
-                $existingKeycloakImage = [string](& docker container inspect `
-                    --format '{{.Image}}' $existingKeycloakContainer 2>$null)
-                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingKeycloakImage)) {
-                    & docker image tag $existingKeycloakImage 'smart-charging-local-keycloak:latest'
-                    if ($LASTEXITCODE -ne 0) { throw 'Existing Keycloak image could not be assigned its stable local tag.' }
-                    Write-Host 'Recovered the optimized Keycloak image from the existing local container.' -ForegroundColor DarkGray
-                }
-            }
-        }
-        $keycloakImageId = @(& docker image ls --quiet --filter 'reference=smart-charging-local-keycloak:latest') |
-            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
-            Select-Object -First 1
-        if ([string]::IsNullOrWhiteSpace([string]$keycloakImageId)) {
-            $buildServices += 'keycloak'
-            Write-Host 'No optimized local Keycloak image was found; building it once.' -ForegroundColor Yellow
-        }
-        else {
-            Write-Host 'Reusing the optimized local Keycloak image; no registry access is required for it.' -ForegroundColor DarkGray
-        }
-    }
 
     & docker @compose build @buildServices
     if ($LASTEXITCODE -ne 0) { throw 'Docker image build failed.' }
@@ -110,9 +70,6 @@ try {
         Write-Warning 'Docker Compose could not satisfy a service dependency. Container status and core diagnostics follow.'
         & docker @compose ps --all
         & docker @compose logs --no-color --tail 160 core
-        if ($bundledIdentityEnabled) {
-            & docker @compose logs --no-color --tail 60 keycloak
-        }
         throw 'Docker Compose startup failed. Review the first ERROR or Caused by entry in the diagnostics above.'
     }
 
@@ -130,18 +87,13 @@ try {
             $homepageResponse = Invoke-WebRequest -Uri "http://127.0.0.1:$adminPort/" -TimeoutSec 3 -UseBasicParsing
             $homepageReady = $homepageResponse.StatusCode -eq 200 -and `
                 $homepageResponse.Content -match '<div id="app"></div>'
-            $identityReady = $true
-            if ($bundledIdentityEnabled) {
-                $identity = Invoke-RestMethod -Uri "http://127.0.0.1:$keycloakPort/realms/$([string]$configuration['KEYCLOAK_REALM'])/.well-known/openid-configuration" -TimeoutSec 3
-                $identityReady = -not [string]::IsNullOrWhiteSpace([string]$identity.issuer)
-            }
             $revisionReady = [string]$build.build.revision -eq $buildRevision
             $webRevision = (Convert-HttpContentToText -Content $webBuild.Content).Trim()
             $webRevisionReady = $webRevision -eq $buildRevision
             $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and `
-                $identityReady -and $revisionReady -and $webRevisionReady
+                $revisionReady -and $webRevisionReady
             $lastReadinessStatus = "core=$($core.status), healthz=$($web.StatusCode), " +
-                "homepage=$homepageReady, identity=$identityReady, revision=$([string]$build.build.revision), " +
+                "homepage=$homepageReady, revision=$([string]$build.build.revision), " +
                 "webRevision=$webRevision, expectedRevision=$buildRevision"
         }
         catch {
@@ -154,14 +106,9 @@ try {
     if (-not $ready) {
         & docker @compose ps --all
         $logServices = @('core', 'admin-web')
-        if ($bundledIdentityEnabled) { $logServices += 'keycloak' }
         & docker @compose logs --tail 80 @logServices
         Write-Warning "Last readiness check: $lastReadinessStatus"
         throw "Services did not become ready within $TimeoutSeconds seconds. Review the container logs above."
-    }
-
-    if ($bundledIdentityEnabled) {
-        Sync-BundledIdentity -Configuration $configuration
     }
 
     Write-Host ''
@@ -169,10 +116,9 @@ try {
     Write-Host "Admin console: http://127.0.0.1:$adminPort/"
     Write-Host "API through local proxy: http://127.0.0.1:$adminPort/api/v1"
     Write-Host "Core API (diagnostics): http://127.0.0.1:$corePort"
-    if ($bundledIdentityEnabled) {
-        Write-Host "Identity service: http://127.0.0.1:$keycloakPort/"
+    if ([string]$configuration['IDENTITY_PROVIDER_MODE'] -eq 'database') {
         Write-Host 'Initial login: run .\config-manager.cmd credentials' -ForegroundColor Yellow
-        Write-Host 'Log in as the platform administrator, complete password/MFA setup, then create downstream tenants in Platform and Tenants.' -ForegroundColor Yellow
+        Write-Host 'Log in as the platform super-administrator, change the one-time password, then create downstream tenants in Platform and Tenants.' -ForegroundColor Yellow
     }
     if ($deviceGatewayEnabled) {
         Write-Host 'Device gateway: enabled with the supplied TLS certificates.'

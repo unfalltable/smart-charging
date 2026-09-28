@@ -79,27 +79,19 @@ function Invoke-ConfigurationWizard {
     Write-Host ''
     Write-Host 'Existing secrets are never displayed. Press Enter to preserve a value.' -ForegroundColor Cyan
     Write-Host '1. Identity' -ForegroundColor Cyan
-    $bundledIdentity = Read-YesNo -Prompt 'Use the bundled self-hosted identity service' -CurrentValue ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'bundled')
-    if ($bundledIdentity) {
-        $Values['IDENTITY_PROVIDER_MODE'] = 'bundled'
-        [void](Set-BundledIdentityConfiguration -Values $Values)
-        foreach ($name in @('PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME', 'PLATFORM_ADMIN_EMAIL', 'PLATFORM_ADMIN_PASSWORD')) {
+    $databaseIdentity = Read-YesNo -Prompt 'Use the built-in username and password login' -CurrentValue ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'database')
+    if ($databaseIdentity) {
+        $Values['IDENTITY_PROVIDER_MODE'] = 'database'
+        [void](Set-DatabaseIdentityConfiguration -Values $Values)
+        foreach ($name in @('APP_JWT_ISSUER', 'API_JWT_AUDIENCE', 'ALLOWED_ORIGINS',
+                'PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME', 'PLATFORM_ADMIN_EMAIL',
+                'PLATFORM_ADMIN_PASSWORD')) {
             Set-ConfigurationValueInteractively -Values $Values -Name $name
         }
-        $identityEmail = Read-YesNo -Prompt 'Send operator invitations and password recovery by SMTP' -CurrentValue (Get-ConfigurationBoolean -Values $Values -Name 'IDENTITY_EMAIL_ENABLED')
-        $Values['IDENTITY_EMAIL_ENABLED'] = $identityEmail.ToString().ToLowerInvariant()
-        if ($identityEmail) {
-            foreach ($name in @('IDENTITY_SMTP_HOST', 'IDENTITY_SMTP_PORT', 'IDENTITY_SMTP_FROM',
-                    'IDENTITY_SMTP_FROM_DISPLAY_NAME', 'IDENTITY_SMTP_USERNAME', 'IDENTITY_SMTP_PASSWORD',
-                    'IDENTITY_SMTP_STARTTLS', 'IDENTITY_INVITATION_LIFESPAN_HOURS')) {
-                Set-ConfigurationValueInteractively -Values $Values -Name $name
-            }
-        }
-        Write-Host 'Bundled OIDC endpoints are generated automatically. Use config-manager.cmd credentials when you need to view the initial login.' -ForegroundColor Yellow
+        Write-Host 'Use config-manager.cmd credentials to view the initial one-time platform login.' -ForegroundColor Yellow
     }
     else {
         $Values['IDENTITY_PROVIDER_MODE'] = 'external'
-        $Values['IDENTITY_EMAIL_ENABLED'] = 'false'
         foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'API_JWT_AUDIENCE', 'ALLOWED_ORIGINS', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_CLIENT_ID', 'VITE_OIDC_REDIRECT_URI', 'VITE_OIDC_SCOPES')) {
             Set-ConfigurationValueInteractively -Values $Values -Name $name
         }
@@ -158,12 +150,8 @@ function Invoke-ConfigurationWizard {
 
     Write-DeploymentConfiguration -Path (Get-DeploymentConfigurationPath -Workspace $workspace) -Values $Values
     $miniappPath = Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $Values
-    $identityPath = Export-BundledIdentityConfiguration -Workspace $workspace -Values $Values
     Write-Host ''
     Write-Host "Configuration saved. Mini-program configuration generated at: $miniappPath" -ForegroundColor Green
-    if (-not [string]::IsNullOrWhiteSpace($identityPath)) {
-        Write-Host "Bundled identity configuration generated at: $identityPath" -ForegroundColor Green
-    }
 }
 
 function Show-ConfigurationStatus {
@@ -191,7 +179,6 @@ try {
     switch ($Command) {
         'init' {
             $miniappPath = Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $values
-            $identityPath = Export-BundledIdentityConfiguration -Workspace $workspace -Values $values
             if ($state.Created) {
                 Write-Host "Created unified configuration: $($state.Path)" -ForegroundColor Green
             }
@@ -202,9 +189,6 @@ try {
                 Write-Host "Unified configuration already exists: $($state.Path)" -ForegroundColor Green
             }
             Write-Host "Mini-program deployment configuration: $miniappPath"
-            if (-not [string]::IsNullOrWhiteSpace($identityPath)) {
-                Write-Host "Bundled identity configuration: $identityPath"
-            }
             Write-Host 'Next, run .\config-manager.cmd validate and then .\docker-start.cmd. Use wizard only to customize integrations.'
         }
         'status' {
@@ -241,19 +225,15 @@ try {
             Write-Host "Generated mini-program deployment configuration: $miniappPath" -ForegroundColor Green
         }
         'credentials' {
-            if ([string]$values['IDENTITY_PROVIDER_MODE'] -ne 'bundled') {
-                throw 'The credentials command is available only when IDENTITY_PROVIDER_MODE=bundled.'
+            if ([string]$values['IDENTITY_PROVIDER_MODE'] -ne 'database') {
+                throw 'The credentials command is available only when IDENTITY_PROVIDER_MODE=database.'
             }
             Write-Host 'Sensitive credentials are shown because the credentials command was explicitly requested.' -ForegroundColor Yellow
             Write-Host "Platform login URL: http://127.0.0.1:$([string]$values['ADMIN_WEB_PORT'])/"
             Write-Host "Platform username: $([string]$values['PLATFORM_ADMIN_USERNAME'])"
             Write-Host "Platform subject: $([string]$values['PLATFORM_ADMIN_SUBJECT'])"
             Write-Host "Platform temporary password: $([string]$values['PLATFORM_ADMIN_PASSWORD'])"
-            Write-Host "Reserved first tenant ID: $([string]$values['INITIAL_TENANT_ID'])"
-            Write-Host "Keycloak admin URL: http://127.0.0.1:$([string]$values['KEYCLOAK_PORT'])/admin/"
-            Write-Host "Keycloak bootstrap username: $([string]$values['KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME'])"
-            Write-Host "Keycloak bootstrap password: $([string]$values['KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD'])"
-            Write-Host 'Change both temporary credentials after the first successful login.' -ForegroundColor Yellow
+            Write-Host 'This password works only until the first successful change; startup never overwrites the changed database password.' -ForegroundColor Yellow
         }
     }
 }

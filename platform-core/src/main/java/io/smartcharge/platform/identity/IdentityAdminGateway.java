@@ -25,7 +25,8 @@ interface IdentityAdminGateway {
     List<LoginEvent> loginEvents(int maximum);
 
     record Capabilities(boolean managedLifecycle, boolean emailDelivery,
-                        boolean temporaryPasswordFallback, int invitationLifespanHours) { }
+                        boolean temporaryPasswordFallback, boolean mfaSupported,
+                        int invitationLifespanHours) { }
 
     record ProvisionIdentity(String username, String email, String displayName, UUID tenantId,
                              String roleCode, boolean requireMfa) { }

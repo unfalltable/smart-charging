@@ -38,6 +38,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     if (response.status === 401) {
       sessionStorage.removeItem('access_token')
       sessionStorage.removeItem('refresh_token')
+      sessionStorage.removeItem('tenant_id')
+      window.dispatchEvent(new CustomEvent('admin-auth-expired'))
     }
     const error = await response.json().catch(() => null) as { message?: string } | null
     throw new Error(error?.message ?? `API request failed (${response.status})`)

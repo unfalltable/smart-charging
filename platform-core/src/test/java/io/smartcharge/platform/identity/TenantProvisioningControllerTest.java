@@ -39,37 +39,37 @@ class TenantProvisioningControllerTest {
     @Test
     void reconcilesTheSameTenantInsteadOfCreatingADuplicate() {
         UUID tenantId = UUID.randomUUID();
-        ProvisionTenantRequest request = request(tenantId, "gavin");
+        ProvisionTenantRequest request = request(tenantId, "tenant-a");
         when(jdbc.query(anyString(), ArgumentMatchers.<RowMapper<TenantIdentity>>any(),
-                eq(tenantId), eq("gavin")))
-                .thenReturn(List.of(new TenantIdentity(tenantId, "gavin")));
+                eq(tenantId), eq("tenant-a")))
+                .thenReturn(List.of(new TenantIdentity(tenantId, "tenant-a")));
 
         TenantResolution resolution = controller.createOrReconcileTenant(tenantId, request);
 
         assertThat(resolution).isEqualTo(new TenantResolution(tenantId, false));
-        verify(jdbc).update(anyString(), eq("Gavin"), eq(tenantId));
+        verify(jdbc).update(anyString(), eq("Tenant A"), eq(tenantId));
     }
 
     @Test
     void createsATenantWhenNeitherIdentityNorCodeExists() {
         UUID tenantId = UUID.randomUUID();
-        ProvisionTenantRequest request = request(tenantId, "gavin");
+        ProvisionTenantRequest request = request(tenantId, "tenant-a");
         when(jdbc.query(anyString(), ArgumentMatchers.<RowMapper<TenantIdentity>>any(),
-                eq(tenantId), eq("gavin")))
+                eq(tenantId), eq("tenant-a")))
                 .thenReturn(List.of());
 
         TenantResolution resolution = controller.createOrReconcileTenant(tenantId, request);
 
         assertThat(resolution).isEqualTo(new TenantResolution(tenantId, true));
-        verify(jdbc).update(anyString(), eq(tenantId), eq("gavin"), eq("Gavin"));
+        verify(jdbc).update(anyString(), eq(tenantId), eq("tenant-a"), eq("Tenant A"));
     }
 
     @Test
     void rejectsReusingATenantIdentityForAnotherCode() {
         UUID tenantId = UUID.randomUUID();
-        ProvisionTenantRequest request = request(tenantId, "gavin");
+        ProvisionTenantRequest request = request(tenantId, "tenant-a");
         when(jdbc.query(anyString(), ArgumentMatchers.<RowMapper<TenantIdentity>>any(),
-                eq(tenantId), eq("gavin")))
+                eq(tenantId), eq("tenant-a")))
                 .thenReturn(List.of(new TenantIdentity(tenantId, "another-code")));
 
         assertThatThrownBy(() -> controller.createOrReconcileTenant(tenantId, request))
@@ -82,18 +82,18 @@ class TenantProvisioningControllerTest {
     void reusesTheDatabaseTenantWhenAStaleConfiguredIdUsesTheSameCode() {
         UUID staleConfiguredId = UUID.randomUUID();
         UUID databaseTenantId = UUID.randomUUID();
-        ProvisionTenantRequest request = request(staleConfiguredId, "gavin");
+        ProvisionTenantRequest request = request(staleConfiguredId, "tenant-a");
         when(jdbc.query(anyString(), ArgumentMatchers.<RowMapper<TenantIdentity>>any(),
-                eq(staleConfiguredId), eq("gavin")))
-                .thenReturn(List.of(new TenantIdentity(databaseTenantId, "gavin")));
+                eq(staleConfiguredId), eq("tenant-a")))
+                .thenReturn(List.of(new TenantIdentity(databaseTenantId, "tenant-a")));
 
         TenantResolution resolution = controller.createOrReconcileTenant(staleConfiguredId, request);
 
         assertThat(resolution).isEqualTo(new TenantResolution(databaseTenantId, false));
-        verify(jdbc).update(anyString(), eq("Gavin"), eq(databaseTenantId));
+        verify(jdbc).update(anyString(), eq("Tenant A"), eq(databaseTenantId));
     }
 
     private ProvisionTenantRequest request(UUID tenantId, String code) {
-        return new ProvisionTenantRequest(tenantId, code, "Gavin", "admin-subject", "Platform Admin");
+        return new ProvisionTenantRequest(tenantId, code, "Tenant A", "admin-subject", "Platform Admin");
     }
 }

@@ -47,19 +47,16 @@ charging:
     api-audience: ${API_JWT_AUDIENCE:smart-charging-api}
     provisioning-client-id: ${INTERNAL_PROVISIONING_CLIENT_ID:}
     identity-provider-mode: ${IDENTITY_PROVIDER_MODE:external}
-    initial-admin-username: ${PLATFORM_ADMIN_USERNAME:}
-    initial-tenant-id: ${INITIAL_TENANT_ID:}
     access-token-minutes: ${ACCESS_TOKEN_MINUTES:15}
     refresh-token-days: ${REFRESH_TOKEN_DAYS:30}
   identity:
+    local:
+      subject: ${PLATFORM_ADMIN_SUBJECT:}
+      username: ${PLATFORM_ADMIN_USERNAME:}
+      password: ${PLATFORM_ADMIN_PASSWORD:}
+      display-name: ${PLATFORM_ADMIN_DISPLAY_NAME:Platform Administrator}
+      email: ${PLATFORM_ADMIN_EMAIL:}
     admin:
-      base-uri: ${IDENTITY_ADMIN_BASE_URI:}
-      realm: ${IDENTITY_ADMIN_REALM:}
-      client-id: ${IDENTITY_ADMIN_CLIENT_ID:}
-      client-secret: ${IDENTITY_ADMIN_CLIENT_SECRET:}
-      web-client-id: ${IDENTITY_ADMIN_WEB_CLIENT_ID:}
-      invitation-redirect-uri: ${IDENTITY_INVITATION_REDIRECT_URI:}
-      email-delivery-enabled: ${IDENTITY_EMAIL_ENABLED:false}
       invitation-lifespan-hours: ${IDENTITY_INVITATION_LIFESPAN_HOURS:48}
     wechat:
       enabled: ${WECHAT_IDENTITY_ENABLED:false}

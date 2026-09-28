@@ -41,8 +41,8 @@ class TenantAccessFilterTest {
         when(jdbc.queryForObject("select exists(select 1 from tenant where id=? and status='ACTIVE')",
                 Boolean.class, tenantId)).thenReturn(true);
         TenantAccessFilter filter = new TenantAccessFilter(jdbc, tenantJdbc,
-                new PlatformAuthority("bundled", "platform-admin"));
-        SecurityContextHolder.getContext().setAuthentication(authentication("platform-admin"));
+                new PlatformAuthority());
+        SecurityContextHolder.getContext().setAuthentication(authentication("platform-admin", true));
         TenantContext.set(tenantId);
         AtomicBoolean invoked = new AtomicBoolean();
 
@@ -62,8 +62,8 @@ class TenantAccessFilterTest {
         when(jdbc.queryForObject(contains("join tenant t on t.id=m.tenant_id and t.status='ACTIVE'"),
                 eq(Boolean.class), eq(tenantId), eq("verified-platform-owner"))).thenReturn(false);
         TenantAccessFilter filter = new TenantAccessFilter(jdbc, tenantJdbc,
-                new PlatformAuthority("bundled", "platform-admin"));
-        SecurityContextHolder.getContext().setAuthentication(authentication("tenant-user"));
+                new PlatformAuthority());
+        SecurityContextHolder.getContext().setAuthentication(authentication("tenant-user", false));
         TenantContext.set(tenantId);
         AtomicBoolean invoked = new AtomicBoolean();
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -76,7 +76,7 @@ class TenantAccessFilterTest {
         assertThat(response.getContentAsString()).contains("No active tenant role");
     }
 
-    private JwtAuthenticationToken authentication(String username) {
+    private JwtAuthenticationToken authentication(String username, boolean platformAdministrator) {
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "none")
                 .subject("verified-platform-owner")
@@ -85,6 +85,8 @@ class TenantAccessFilterTest {
                 .claim("preferred_username", username)
                 .claim("tenant_ids", List.of(UUID.randomUUID().toString()))
                 .build();
-        return new JwtAuthenticationToken(jwt, List.of(), jwt.getSubject());
+        return new JwtAuthenticationToken(jwt, platformAdministrator
+                ? List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("SCOPE_platform_admin"))
+                : List.of(), jwt.getSubject());
     }
 }

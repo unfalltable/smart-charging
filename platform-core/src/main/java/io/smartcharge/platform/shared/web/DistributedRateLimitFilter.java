@@ -71,7 +71,10 @@ public final class DistributedRateLimitFilter extends OncePerRequestFilter {
     }
 
     private Limit classify(String path) {
-        if (path.equals("/api/v1/auth/miniapp/login")) return new Limit("login", positive(limits.loginPerMinute(), 20));
+        if (path.equals("/api/v1/auth/miniapp/login") || path.equals("/api/v1/auth/admin/login")
+                || path.equals("/api/v1/auth/admin/refresh")) {
+            return new Limit("login", positive(limits.loginPerMinute(), 20));
+        }
         if (path.startsWith("/api/v1/public/")) return new Limit("public", positive(limits.publicPerMinute(), 120));
         return new Limit("api", positive(limits.defaultPerMinute(), 600));
     }

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { getJson, loadSessionContext, patchJson, postJson, selectTenant,
   type DashboardSummary, type SessionContext } from './api/client'
-import { initializeAuth, login, logout } from './auth'
+import { changePassword, initializeAuth, login, logout, usesExternalIdentity } from './auth'
 
 type Page = 'platform' | 'dashboard' | 'organization' | 'assets' | 'orders' | 'tariffs' | 'finance' | 'operations' | 'legal' | 'access' | 'audit'
 type Row = Record<string, unknown>
-type AccessCapabilities = { managedLifecycle: boolean; emailDelivery: boolean; temporaryPasswordFallback: boolean; invitationLifespanHours: number }
+type AccessCapabilities = { managedLifecycle: boolean; emailDelivery: boolean; temporaryPasswordFallback: boolean; mfaSupported: boolean; invitationLifespanHours: number }
 type CredentialResult = { delivery: string; temporaryPassword: string | null }
 type OrganizationNode = {
   id: string; parentId: string | null; code: string; name: string; organizationType: string
@@ -24,6 +24,7 @@ const loading = ref(false)
 const loadError = ref('')
 const notice = ref('')
 const authenticated = ref(false)
+const mustChangePassword = ref(false)
 const sessionContext = ref<SessionContext | null>(null)
 const currentTenantId = ref('')
 const summary = ref<DashboardSummary>({ onlineDevices: 0, totalDevices: 0, availableConnectors: 0, activeOrders: 0, todayRevenueMinor: 0 })
@@ -34,8 +35,13 @@ const merchantChannels = ref<Row[]>([]), memberships = ref<Row[]>([]), settlemen
 const invoices = ref<Row[]>([]), agreements = ref<Row[]>([])
 const organizationTree = ref<OrganizationTree | null>(null)
 const platformTenants = ref<Row[]>([]), loginEvents = ref<Row[]>([])
-const accessCapabilities = ref<AccessCapabilities>({ managedLifecycle: false, emailDelivery: false, temporaryPasswordFallback: false, invitationLifespanHours: 48 })
+const accessCapabilities = ref<AccessCapabilities>({ managedLifecycle: false, emailDelivery: false, temporaryPasswordFallback: false, mfaSupported: false, invitationLifespanHours: 48 })
 const temporaryCredential = ref<{ username: string; password: string } | null>(null)
+const loginForm = reactive({ username: '', password: '' })
+const passwordForm = reactive({ currentPassword: '', newPassword: '', confirmation: '' })
+const showLoginPassword = ref(false)
+const showCurrentPassword = ref(false)
+const showNewPassword = ref(false)
 
 const stationForm = reactive({ organizationId: '', code: '', name: '', address: '', timezone: 'Asia/Shanghai', status: 'DRAFT' })
 const deviceForm = reactive({ stationId: '', deviceCode: '', protocolCode: '', productModel: '', connectorCount: null as number | null, ratedPowerW: null as number | null })
@@ -198,8 +204,52 @@ async function createTenant() {
   }, '租户及首位管理员已创建')
 }
 async function changeTenantStatus(row: Row, status: string) { await refresh('platform', () => patchJson(`/platform/tenants/${row.id}/status`, { status }), '租户状态已更新') }
-async function beginLogin() { try { await login() } catch (error) { loadError.value = error instanceof Error ? error.message : '登录失败' } }
-function signOut() { logout(); authenticated.value = false }
+async function enterConsole() {
+  sessionContext.value = await loadSessionContext()
+  currentTenantId.value = sessionStorage.getItem('tenant_id') ?? ''
+  if (!currentTenantId.value && sessionContext.value.platformAdministrator) page.value = 'platform'
+  else if (!visiblePages.value.includes(page.value)) page.value = visiblePages.value[0] ?? 'platform'
+  await load()
+}
+async function beginLogin() {
+  loadError.value = ''; loading.value = true
+  try {
+    const state = await login(loginForm.username.trim(), loginForm.password)
+    authenticated.value = state.authenticated
+    mustChangePassword.value = state.mustChangePassword
+    loginForm.password = ''
+    if (state.authenticated && !state.mustChangePassword) await enterConsole()
+  } catch (error) { loadError.value = error instanceof Error ? error.message : '登录失败' }
+  finally { loading.value = false }
+}
+async function submitPasswordChange() {
+  loadError.value = ''
+  if (passwordForm.newPassword !== passwordForm.confirmation) {
+    loadError.value = '两次输入的新密码不一致'
+    return
+  }
+  loading.value = true
+  try {
+    const state = await changePassword(passwordForm.currentPassword, passwordForm.newPassword)
+    mustChangePassword.value = state.mustChangePassword
+    Object.assign(passwordForm, { currentPassword: '', newPassword: '', confirmation: '' })
+    await enterConsole()
+  } catch (error) { loadError.value = error instanceof Error ? error.message : '密码修改失败' }
+  finally { loading.value = false }
+}
+async function signOut() {
+  await logout()
+  authenticated.value = false
+  mustChangePassword.value = false
+  sessionContext.value = null
+}
+function handleAuthenticationExpired() {
+  authenticated.value = false
+  mustChangePassword.value = false
+  sessionContext.value = null
+  currentTenantId.value = ''
+  loadError.value = '登录状态已失效，请重新登录'
+}
 async function switchTenant() {
   if (!sessionContext.value) return
   selectTenant(currentTenantId.value, sessionContext.value)
@@ -208,25 +258,47 @@ async function switchTenant() {
 }
 
 onMounted(async () => {
+  window.addEventListener('admin-auth-expired', handleAuthenticationExpired)
   try {
-    authenticated.value = await initializeAuth()
-    if (authenticated.value) {
-      sessionContext.value = await loadSessionContext()
-      currentTenantId.value = sessionStorage.getItem('tenant_id') ?? ''
-      if (!currentTenantId.value && sessionContext.value.platformAdministrator) page.value = 'platform'
-      else if (!visiblePages.value.includes(page.value)) page.value = visiblePages.value[0] ?? 'platform'
-      await load()
-    }
+    const state = await initializeAuth()
+    authenticated.value = state.authenticated
+    mustChangePassword.value = state.mustChangePassword
+    if (state.authenticated && !state.mustChangePassword) await enterConsole()
   }
   catch (error) { loadError.value = error instanceof Error ? error.message : '登录失败' }
 })
+onBeforeUnmount(() => window.removeEventListener('admin-auth-expired', handleAuthenticationExpired))
 </script>
 
 <template>
-  <div v-if="!authenticated" class="login-screen"><div class="login-card"><span class="brand-mark">⚡</span><p>SMART CHARGING</p><h1>充电运营平台</h1><span>使用企业身份登录，权限按租户与岗位双重校验。</span><el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon /><button @click="beginLogin">企业账号登录</button></div></div>
+  <div v-if="!authenticated || mustChangePassword" class="login-screen">
+    <form v-if="mustChangePassword" class="login-card" @submit.prevent="submitPasswordChange">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.3 2 5.7 13h5.1L9.9 22l8.4-12h-5.2z" /></svg></span>
+      <p>FIRST SIGN-IN</p><h1>设置新密码</h1>
+      <span>初始密码只能使用一次。新密码需包含大小写字母、数字和特殊字符，长度至少 12 位。</span>
+      <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
+      <label>当前临时密码<span class="password-field"><input v-model="passwordForm.currentPassword" :type="showCurrentPassword ? 'text' : 'password'" autocomplete="current-password" minlength="8" maxlength="128" required><button type="button" :aria-pressed="showCurrentPassword" @click="showCurrentPassword = !showCurrentPassword">{{ showCurrentPassword ? '隐藏' : '显示' }}</button></span></label>
+      <label>新密码<span class="password-field"><input v-model="passwordForm.newPassword" :type="showNewPassword ? 'text' : 'password'" autocomplete="new-password" minlength="12" maxlength="128" required><button type="button" :aria-pressed="showNewPassword" @click="showNewPassword = !showNewPassword">{{ showNewPassword ? '隐藏' : '显示' }}</button></span></label>
+      <label>确认新密码<input v-model="passwordForm.confirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+      <button :disabled="loading">{{ loading ? '正在保存…' : '保存密码并进入平台' }}</button>
+      <button type="button" class="login-secondary" @click="signOut">返回登录</button>
+    </form>
+    <form v-else class="login-card" @submit.prevent="beginLogin">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.3 2 5.7 13h5.1L9.9 22l8.4-12h-5.2z" /></svg></span>
+      <p>SMART CHARGING</p><h1>充电运营平台</h1>
+      <span>{{ usesExternalIdentity ? '使用企业统一身份登录。' : '使用平台分配的管理账号登录。' }}权限按平台、租户与岗位校验。</span>
+      <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
+      <template v-if="!usesExternalIdentity">
+        <label>用户名<input v-model.trim="loginForm.username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="64" required></label>
+        <label>密码<span class="password-field"><input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" minlength="8" maxlength="128" required><button type="button" :aria-pressed="showLoginPassword" @click="showLoginPassword = !showLoginPassword">{{ showLoginPassword ? '隐藏' : '显示' }}</button></span></label>
+      </template>
+      <button :disabled="loading">{{ loading ? '正在登录…' : (usesExternalIdentity ? '企业账号登录' : '登录') }}</button>
+      <small v-if="!usesExternalIdentity">平台超级管理员由部署配置创建；租户员工账号由上级管理员分配。</small>
+    </form>
+  </div>
   <div v-else class="shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">⚡</span><span>充电运营平台</span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.3 2 5.7 13h5.1L9.9 22l8.4-12h-5.2z" /></svg></span><span>充电运营平台</span></div>
       <nav><button v-for="item in visiblePages" :key="item" class="nav-item" :class="{ active: page === item }" @click="load(item)">{{ titles[item][1] }}</button></nav>
       <div class="environment">
         <label for="tenant-switcher">当前租户</label>
@@ -244,7 +316,7 @@ onMounted(async () => {
       <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
       <el-alert v-if="notice" :title="notice" type="success" :closable="false" show-icon />
       <section v-if="temporaryCredential" class="credential-notice" role="status">
-        <div><strong>一次性临时凭据</strong><span>仅本次显示。对方首次登录后必须修改密码，高权限账号还必须绑定动态口令。</span></div>
+        <div><strong>一次性临时凭据</strong><span>仅本次显示。对方首次登录后必须修改密码，请通过安全渠道单独交付。</span></div>
         <code>{{ temporaryCredential.username }} / {{ temporaryCredential.password }}</code>
         <button @click="copyTemporaryCredential">复制凭据</button><button class="secondary-button" @click="temporaryCredential = null">已安全保存</button>
       </section>
@@ -252,7 +324,7 @@ onMounted(async () => {
         <template v-if="page === 'platform'">
           <section class="platform-intro">
             <div><p class="eyebrow">CONTROL PLANE</p><h2>平台运营方</h2><span>你位于所有租户之上，负责开通下游运营商、暂停服务和查看全局规模。租户管理员只能管理自己租户内的员工与业务。</span></div>
-            <dl><div><dt>平台角色</dt><dd>平台总管理员</dd></div><div><dt>管理边界</dt><dd>跨租户控制面</dd></div><div><dt>账号策略</dt><dd>邀请制 · 强制 MFA</dd></div></dl>
+            <dl><div><dt>平台角色</dt><dd>平台总管理员</dd></div><div><dt>管理边界</dt><dd>跨租户控制面</dd></div><div><dt>账号策略</dt><dd>管理员分配 · 首次改密</dd></div></dl>
           </section>
           <form class="panel form tenant-onboarding" @submit.prevent="createTenant">
             <div class="form-heading"><div><p class="eyebrow">ONBOARDING</p><h2>开通下游租户与首位管理员</h2></div><span>不会开放匿名注册；首位管理员由平台直接邀请。</span></div>
@@ -322,7 +394,7 @@ onMounted(async () => {
           <section class="panel table-panel"><table><thead><tr><th>文档</th><th>版本</th><th>标题</th><th>哈希</th><th>生效时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in agreements" :key="String(row.id)"><td>{{ row.documentCode }}</td><td>{{ row.version }}</td><td>{{ row.title }}</td><td class="mono">{{ short(row.contentHash) }}</td><td>{{ date(row.effectiveAt) }}</td><td>{{ row.status }}</td></tr></tbody></table></section>
         </template>
         <template v-else-if="page === 'access'">
-          <section class="access-policy"><strong>租户账号策略</strong><span>管理员邀请制 · 首次登录强制改密 · 租户管理员与财务必须 MFA · 冻结后立即撤销会话 · 邀请自动过期</span><em>{{ accessCapabilities.emailDelivery ? '邮件邀请已启用' : '未配置 SMTP：临时密码只显示一次' }}</em></section>
+          <section class="access-policy"><strong>租户账号策略</strong><span>管理员分配 · 首次登录强制改密 · 冻结后立即撤销会话 · 临时密码只显示一次</span><em>{{ accessCapabilities.mfaSupported ? '支持动态口令 MFA' : '当前使用内置账号认证' }}</em></section>
           <form v-if="accessCapabilities.managedLifecycle" class="panel form account-invite" @submit.prevent="inviteMembership">
             <div class="form-heading"><div><p class="eyebrow">INVITATION</p><h2>邀请租户员工</h2></div><span>后台账号不允许自行注册，由租户管理员按岗位发放。</span></div>
             <label>登录用户名<input v-model="membershipForm.username" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,63}" autocomplete="off" required></label>
@@ -330,11 +402,11 @@ onMounted(async () => {
             <label>企业邮箱<input v-model="membershipForm.email" type="email" autocomplete="email" required></label>
             <label>岗位角色<select v-model="membershipForm.roleCode"><option value="TENANT_ADMIN">租户管理员</option><option value="OPERATOR">运营</option><option value="FINANCE">财务</option><option value="AUDITOR">审计</option><option value="SUPPORT">客服</option></select></label>
             <label>邀请有效期（小时）<input v-model.number="membershipForm.expiresInHours" type="number" min="1" max="720" required></label>
-            <label class="checkbox-label"><input v-model="membershipForm.requireMfa" type="checkbox"><span>要求绑定动态口令（管理员和财务始终强制）</span></label>
-            <button>创建账号并发送邀请</button>
+            <label v-if="accessCapabilities.mfaSupported" class="checkbox-label"><input v-model="membershipForm.requireMfa" type="checkbox"><span>要求绑定动态口令</span></label>
+            <button>创建账号</button>
           </form>
           <form v-else class="panel form horizontal" @submit.prevent="createExternalMembership"><h2>关联外部 OIDC 身份</h2><input v-model="externalMembershipForm.subject" placeholder="外部身份 Subject" required><input v-model="externalMembershipForm.displayName" placeholder="姓名"><select v-model="externalMembershipForm.roleCode"><option>TENANT_ADMIN</option><option>OPERATOR</option><option>FINANCE</option><option>AUDITOR</option><option>SUPPORT</option></select><button>授权</button></form>
-          <section class="panel table-panel"><h2>成员与权限</h2><div class="table-scroll"><table><thead><tr><th>成员</th><th>账号</th><th>角色</th><th>MFA</th><th>邀请状态</th><th>最后登录</th><th>操作</th></tr></thead><tbody><tr v-for="row in memberships" :key="String(row.id)"><td><strong>{{ row.displayName || '—' }}</strong><small>{{ row.email || short(row.subject) }}</small></td><td class="mono">{{ row.username || short(row.subject) }}</td><td>{{ row.roleCode }}</td><td>{{ row.mfaRequired ? '强制' : '可选' }}</td><td><span class="state" :class="{ 'state-muted': row.invitationStatus !== 'ACCEPTED' }">{{ row.invitationStatus }}</span><small v-if="row.inviteExpiresAt">至 {{ date(row.inviteExpiresAt) }}</small></td><td>{{ date(row.lastLoginAt) }}</td><td><button v-if="['PENDING','EXPIRED'].includes(String(row.invitationStatus)) && row.identityManaged" @click="resendInvitation(row)">重发邀请</button><button v-if="row.identityManaged" @click="recoverMembership(row, false)">密码恢复</button><button v-if="row.identityManaged && row.mfaRequired" @click="recoverMembership(row, true)">重置 MFA</button><button v-if="row.membershipStatus === 'ACTIVE'" class="danger-button" @click="changeMembership(row, 'DISABLED')">停用</button><button v-else @click="changeMembership(row, 'ACTIVE')">启用</button></td></tr><tr v-if="!memberships.length"><td colspan="7" class="empty-cell">当前租户还没有后台员工账号</td></tr></tbody></table></div></section>
+          <section class="panel table-panel"><h2>成员与权限</h2><div class="table-scroll"><table><thead><tr><th>成员</th><th>账号</th><th>角色</th><th v-if="accessCapabilities.mfaSupported">MFA</th><th>邀请状态</th><th>最后登录</th><th>操作</th></tr></thead><tbody><tr v-for="row in memberships" :key="String(row.id)"><td><strong>{{ row.displayName || '—' }}</strong><small>{{ row.email || short(row.subject) }}</small></td><td class="mono">{{ row.username || short(row.subject) }}</td><td>{{ row.roleCode }}</td><td v-if="accessCapabilities.mfaSupported">{{ row.mfaRequired ? '强制' : '可选' }}</td><td><span class="state" :class="{ 'state-muted': row.invitationStatus !== 'ACCEPTED' }">{{ row.invitationStatus }}</span><small v-if="row.inviteExpiresAt">至 {{ date(row.inviteExpiresAt) }}</small></td><td>{{ date(row.lastLoginAt) }}</td><td><button v-if="['PENDING','EXPIRED'].includes(String(row.invitationStatus)) && row.identityManaged" @click="resendInvitation(row)">重发邀请</button><button v-if="row.identityManaged" @click="recoverMembership(row, false)">重置密码</button><button v-if="accessCapabilities.mfaSupported && row.identityManaged && row.mfaRequired" @click="recoverMembership(row, true)">重置 MFA</button><button v-if="row.membershipStatus === 'ACTIVE'" class="danger-button" @click="changeMembership(row, 'DISABLED')">停用</button><button v-else @click="changeMembership(row, 'ACTIVE')">启用</button></td></tr><tr v-if="!memberships.length"><td :colspan="accessCapabilities.mfaSupported ? 7 : 6" class="empty-cell">当前租户还没有后台员工账号</td></tr></tbody></table></div></section>
           <section v-if="accessCapabilities.managedLifecycle" class="panel table-panel"><h2>登录安全事件</h2><div class="table-scroll"><table><thead><tr><th>时间</th><th>账号</th><th>结果</th><th>来源 IP</th><th>客户端</th><th>风险</th></tr></thead><tbody><tr v-for="row in loginEvents" :key="`${row.occurredAt}-${row.subject}-${row.sourceIp}`"><td>{{ date(row.occurredAt) }}</td><td>{{ row.username || short(row.subject) }}</td><td>{{ row.type }}<small v-if="row.error">{{ row.error }}</small></td><td class="mono">{{ row.sourceIp || '—' }}</td><td>{{ row.clientId || '—' }}</td><td><span class="state" :class="{ 'state-warning': row.risk === 'WARNING' }">{{ row.risk }}</span></td></tr><tr v-if="!loginEvents.length"><td colspan="6" class="empty-cell">暂无该租户成员的登录事件</td></tr></tbody></table></div></section>
         </template>
         <template v-else>

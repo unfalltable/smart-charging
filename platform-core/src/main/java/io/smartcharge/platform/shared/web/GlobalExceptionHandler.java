@@ -2,6 +2,7 @@ package io.smartcharge.platform.shared.web;
 
 import io.smartcharge.platform.shared.domain.DomainException;
 import io.smartcharge.platform.shared.domain.ServiceUnavailableException;
+import io.smartcharge.platform.shared.domain.AuthenticationFailureException;
 import java.time.Instant;
 import java.util.List;
 import jakarta.validation.ConstraintViolationException;
@@ -62,6 +63,12 @@ final class GlobalExceptionHandler {
     ResponseEntity<ApiError> integrity(DataIntegrityViolationException exception) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("DATA_CONFLICT", "The operation conflicts with current data"));
+    }
+
+    @ExceptionHandler(AuthenticationFailureException.class)
+    ResponseEntity<ApiError> authentication(AuthenticationFailureException exception) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiError.of("AUTHENTICATION_FAILED", exception.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
