@@ -31,10 +31,20 @@ final class SessionController {
     SessionView current(Authentication authentication) {
         String subject = authentication.getName();
         boolean platformAdministrator = platformAuthority.isPlatformAdministrator(authentication);
+        String username = jwtClaim(authentication, "preferred_username", subject);
+        String displayName = jwtClaim(authentication, "name", username);
         List<TenantView> tenants = platformAdministrator
                 ? platformTenants()
                 : memberTenants(authentication, subject);
-        return new SessionView(subject, platformAdministrator, tenants);
+        return new SessionView(subject, username, displayName, platformAdministrator, tenants);
+    }
+
+    private static String jwtClaim(Authentication authentication, String claim, String fallback) {
+        if (authentication instanceof JwtAuthenticationToken jwt) {
+            String value = jwt.getToken().getClaimAsString(claim);
+            if (value != null && !value.isBlank()) return value;
+        }
+        return fallback;
     }
 
     private List<TenantView> platformTenants() {
@@ -99,7 +109,8 @@ final class SessionController {
         return new TenantView(first.id(), first.code(), first.displayName(), roles);
     }
 
-    record SessionView(String subject, boolean platformAdministrator, List<TenantView> tenants) { }
+    record SessionView(String subject, String username, String displayName,
+                       boolean platformAdministrator, List<TenantView> tenants) { }
     record TenantView(UUID id, String code, String displayName, List<String> roles) { }
     private record TenantRole(UUID id, String code, String displayName, String role) { }
 }

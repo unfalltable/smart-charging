@@ -58,6 +58,8 @@ charging:
       email: ${PLATFORM_ADMIN_EMAIL:}
     admin:
       invitation-lifespan-hours: ${IDENTITY_INVITATION_LIFESPAN_HOURS:48}
+      login-event-retention-days: ${IDENTITY_LOGIN_EVENT_RETENTION_DAYS:180}
+      expired-token-retention-days: ${IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS:7}
     wechat:
       enabled: ${WECHAT_IDENTITY_ENABLED:false}
       app-id: ${WECHAT_APP_ID:}

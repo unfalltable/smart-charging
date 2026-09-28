@@ -15,6 +15,8 @@ export type TenantAccess = {
 
 export type SessionContext = {
   subject: string
+  username: string
+  displayName: string
   platformAdministrator: boolean
   tenants: TenantAccess[]
 }

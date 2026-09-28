@@ -32,6 +32,8 @@ class SessionControllerTest {
         var session = controller.current(authentication());
 
         assertThat(session.platformAdministrator()).isTrue();
+        assertThat(session.username()).isEqualTo("platform-admin");
+        assertThat(session.displayName()).isEqualTo("platform-admin");
         assertThat(session.tenants()).containsExactly(databaseView);
         assertThat(session.tenants().getFirst().id().toString())
                 .isNotEqualTo("00000000-0000-0000-0000-000000000001");

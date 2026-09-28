@@ -110,6 +110,7 @@ final class AdminTokenService {
                 .claim("scope", String.join(" ", authority.scopes()))
                 .claim("tenant_ids", authority.tenantIds().stream().map(UUID::toString).toList())
                 .claim("preferred_username", account.username())
+                .claim("name", account.displayName())
                 .claim("admin_user_id", account.id().toString())
                 .claim("auth_version", account.authVersion())
                 .build();

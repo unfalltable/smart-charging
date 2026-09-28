@@ -51,6 +51,7 @@ foreach ($forbidden in @('keycloak:', 'bundled-identity', 'postgres-init-keycloa
 }
 foreach ($required in @('SPRING_PROFILES_ACTIVE: production', 'IDENTITY_PROVIDER_MODE: ${IDENTITY_PROVIDER_MODE:-database}',
         'PLATFORM_ADMIN_SUBJECT', 'PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_PASSWORD', 'VITE_AUTH_MODE',
+        'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS',
         'profiles: ["device"]', 'DEVICE_TLS_ENABLED: "true"', 'APP_BUILD_REVISION')) {
     if (-not $compose.Contains($required)) { throw "Runtime Compose setting is missing: $required" }
 }
@@ -87,6 +88,10 @@ try {
     $state = Initialize-DeploymentConfiguration -Workspace $testRoot
     if ($state.Values['IDENTITY_PROVIDER_MODE'] -ne 'database') {
         throw 'Fresh installations must default to built-in database identity.'
+    }
+    if ($state.Values['IDENTITY_LOGIN_EVENT_RETENTION_DAYS'] -ne '180' -or
+            $state.Values['IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS'] -ne '7') {
+        throw 'Fresh configuration must include bounded identity-data retention defaults.'
     }
     foreach ($required in @('PLATFORM_ADMIN_SUBJECT', 'PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_PASSWORD')) {
         if ([string]::IsNullOrWhiteSpace([string]$state.Values[$required])) {

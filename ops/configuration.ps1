@@ -42,6 +42,8 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'VITE_OIDC_REDIRECT_URI' 'Identity' $false $false 'http://127.0.0.1:8088/auth/callback' '' 'Admin web login callback URI'
     New-ConfigurationDefinition 'VITE_OIDC_SCOPES' 'Identity' $false $false 'openid' '' 'OIDC scopes requested by the admin web'
     New-ConfigurationDefinition 'IDENTITY_INVITATION_LIFESPAN_HOURS' 'Identity' $true $false '48' '' 'Account invitation validity in hours'
+    New-ConfigurationDefinition 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS' 'Identity' $true $false '180' '' 'Administrator login-event retention in days'
+    New-ConfigurationDefinition 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS' 'Identity' $true $false '7' '' 'Expired refresh-token retention in days'
 
     New-ConfigurationDefinition 'PLATFORM_ADMIN_USERNAME' 'Built-in administrator' $false $false '' 'PlatformAdminUsername' 'Initial platform super-administrator username'
     New-ConfigurationDefinition 'PLATFORM_ADMIN_DISPLAY_NAME' 'Built-in administrator' $false $false 'Platform Administrator' '' 'Initial platform super-administrator display name'
@@ -466,7 +468,7 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_INVITATION_LIFESPAN_HOURS')) {
+    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_INVITATION_LIFESPAN_HOURS', 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS')) {
         $number = 0
         if (-not [int]::TryParse([string]$Values[$name], [ref]$number) -or $number -lt 1) {
             $errors.Add("$($name): value must be a positive integer")

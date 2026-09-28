@@ -12,6 +12,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/platform/tenants")
 final class PlatformTenantManagementController {
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private final JdbcTemplate jdbc;
     private final TenantJdbcExecutor tenantJdbc;
     private final TenantProvisioningController provisioning;
@@ -53,23 +55,60 @@ final class PlatformTenantManagementController {
     @GetMapping
     List<PlatformTenantView> list(Authentication authentication) {
         platformAuthority.requirePlatformAdministrator(authentication);
+        Instant todayStart = java.time.LocalDate.now(BUSINESS_ZONE).atStartOfDay(BUSINESS_ZONE).toInstant();
         return jdbc.query("""
                 select id, code, display_name, status, created_at, updated_at
                   from tenant order by created_at desc, code
                 """, (result, row) -> {
             UUID tenantId = result.getObject("id", UUID.class);
-            TenantCounts counts = tenantJdbc.readWriteAs(tenantId, () -> new TenantCounts(
-                    jdbc.queryForObject("""
-                            select count(distinct user_id) from tenant_membership
-                             where tenant_id=? and status='ACTIVE'
-                               and (accepted_at is not null or invite_expires_at is null or invite_expires_at > now())
-                            """, Integer.class, tenantId),
-                    jdbc.queryForObject("select count(*) from station where tenant_id=?", Integer.class, tenantId),
-                    jdbc.queryForObject("select count(*) from device where tenant_id=?", Integer.class, tenantId)));
+            TenantCounts counts = tenantJdbc.readWriteAs(tenantId, () -> tenantCounts(tenantId, todayStart));
             return new PlatformTenantView(tenantId, result.getString("code"), result.getString("display_name"),
                     result.getString("status"), counts.activeMembers(), counts.stations(), counts.devices(),
+                    counts.onlineDevices(), counts.successfulPaymentsToday(), counts.todayNetRevenueMinor(),
+                    counts.confirmedPlatformServiceFeeMinor(), counts.pendingPlatformServiceFeeMinor(),
                     result.getTimestamp("created_at").toInstant(), result.getTimestamp("updated_at").toInstant());
         });
+    }
+
+    private TenantCounts tenantCounts(UUID tenantId, Instant todayStart) {
+        return jdbc.queryForObject("""
+                with context as (
+                    select cast(? as uuid) tenant_id, cast(? as timestamptz) today_start
+                )
+                select
+                    (select count(distinct user_id) from tenant_membership, context
+                      where tenant_membership.tenant_id=context.tenant_id and status='ACTIVE'
+                        and (accepted_at is not null or invite_expires_at is null or invite_expires_at > now()))
+                        as active_members,
+                    (select count(*) from station, context
+                      where station.tenant_id=context.tenant_id and status <> 'CLOSED') as stations,
+                    (select count(*) from device, context
+                      where device.tenant_id=context.tenant_id and status <> 'RETIRED') as devices,
+                    (select count(*) from device, context
+                      where device.tenant_id=context.tenant_id and status='ONLINE') as online_devices,
+                    (select count(*) from payment_transaction, context
+                      where payment_transaction.tenant_id=context.tenant_id and status='SUCCEEDED'
+                        and transaction_type in ('PAY', 'CAPTURE') and completed_at >= context.today_start)
+                        as successful_payments_today,
+                    (select coalesce(sum(amount_minor), 0) from payment_transaction, context
+                      where payment_transaction.tenant_id=context.tenant_id and status='SUCCEEDED'
+                        and transaction_type in ('PAY', 'CAPTURE') and completed_at >= context.today_start)
+                    - (select coalesce(sum(amount_minor), 0) from refund_transaction, context
+                      where refund_transaction.tenant_id=context.tenant_id and status='SUCCEEDED'
+                        and completed_at >= context.today_start) as today_net_revenue_minor,
+                    (select coalesce(sum(platform_service_fee_minor), 0) from settlement_statement, context
+                      where settlement_statement.tenant_id=context.tenant_id
+                        and status in ('CONFIRMED', 'PAYING', 'PAID')) as confirmed_platform_service_fee_minor,
+                    (select coalesce(sum(platform_service_fee_minor), 0) from settlement_statement, context
+                      where settlement_statement.tenant_id=context.tenant_id
+                        and status in ('CONFIRMED', 'PAYING')) as pending_platform_service_fee_minor
+                """, (result, row) -> new TenantCounts(
+                result.getLong("active_members"), result.getLong("stations"), result.getLong("devices"),
+                result.getLong("online_devices"), result.getLong("successful_payments_today"),
+                result.getLong("today_net_revenue_minor"),
+                result.getLong("confirmed_platform_service_fee_minor"),
+                result.getLong("pending_platform_service_fee_minor")), tenantId,
+                io.smartcharge.platform.shared.persistence.JdbcTimes.timestamp(todayStart));
     }
 
     @PostMapping
@@ -173,7 +212,11 @@ final class PlatformTenantManagementController {
     record PlatformTenantCreated(UUID id, String code, String displayName, String adminUsername,
                                  String adminEmail, String delivery, String temporaryPassword) { }
     record PlatformTenantView(UUID id, String code, String displayName, String status,
-                              int activeMembers, int stations, int devices,
+                              long activeMembers, long stations, long devices, long onlineDevices,
+                              long successfulPaymentsToday, long todayNetRevenueMinor,
+                              long confirmedPlatformServiceFeeMinor, long pendingPlatformServiceFeeMinor,
                               Instant createdAt, Instant updatedAt) { }
-    private record TenantCounts(int activeMembers, int stations, int devices) { }
+    private record TenantCounts(long activeMembers, long stations, long devices, long onlineDevices,
+                                long successfulPaymentsToday, long todayNetRevenueMinor,
+                                long confirmedPlatformServiceFeeMinor, long pendingPlatformServiceFeeMinor) { }
 }

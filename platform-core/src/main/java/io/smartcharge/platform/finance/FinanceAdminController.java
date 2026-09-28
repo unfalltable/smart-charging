@@ -16,7 +16,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/admin/finance")
 final class FinanceAdminController {
     private static final Set<String> CHANNELS = Set.of("WECHAT", "ALIPAY", "BALANCE");
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private final JdbcTemplate jdbc;
     private final TenantJdbcExecutor tenantJdbc;
     private final PaymentGatewayRegistry gateways;
@@ -364,8 +365,8 @@ final class FinanceAdminController {
                     tenantId, request.ruleId(),
                     request.periodEnd(), request.periodStart()).stream().findFirst()
                     .orElseThrow(() -> new DomainException("Settlement rule is not active for the period"));
-            Instant start = request.periodStart().atStartOfDay(ZoneOffset.UTC).toInstant();
-            Instant endExclusive = request.periodEnd().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            Instant start = request.periodStart().atStartOfDay(BUSINESS_ZONE).toInstant();
+            Instant endExclusive = request.periodEnd().plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
             Long payments = jdbc.queryForObject("""
                     select coalesce(sum(p.amount_minor),0)
                       from payment_transaction p
@@ -373,7 +374,9 @@ final class FinanceAdminController {
                       join connector c on c.tenant_id=co.tenant_id and c.id=co.connector_id
                       join device d on d.tenant_id=c.tenant_id and d.id=c.device_id
                       join station s on s.tenant_id=d.tenant_id and s.id=d.station_id
-                     where p.tenant_id=? and p.status='SUCCEEDED' and p.completed_at>=? and p.completed_at<?
+                     where p.tenant_id=? and p.status='SUCCEEDED'
+                       and p.transaction_type in ('PAY', 'CAPTURE')
+                       and p.completed_at>=? and p.completed_at<?
                        and (?=1 or s.organization_id=?)
                     """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive),
                     rule.hierarchyLevel(), rule.organizationId());

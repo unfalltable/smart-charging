@@ -4,8 +4,7 @@ import io.smartcharge.platform.tenancy.TenantContext;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
+import java.time.ZoneId;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/operations")
 final class OperationsDashboardController {
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private final JdbcTemplate jdbc;
     private final TenantJdbcExecutor tenantJdbc;
 
@@ -40,11 +40,17 @@ final class OperationsDashboardController {
                     select count(*) from charging_order
                      where tenant_id = ? and status in ('START_PENDING', 'CHARGING', 'STOP_PENDING')
                     """, Long.class, tenantId);
-            Instant todayUtc = ZonedDateTime.now(ZoneOffset.UTC).toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant();
+            Instant todayStart = java.time.LocalDate.now(BUSINESS_ZONE).atStartOfDay(BUSINESS_ZONE).toInstant();
             Long revenue = jdbc.queryForObject("""
-                    select coalesce(sum(amount_minor), 0) from payment_transaction
-                     where tenant_id = ? and status = 'SUCCEEDED' and completed_at >= ?
-                    """, Long.class, tenantId, JdbcTimes.timestamp(todayUtc));
+                    select
+                        (select coalesce(sum(amount_minor), 0) from payment_transaction
+                          where tenant_id = ? and status = 'SUCCEEDED'
+                            and transaction_type in ('PAY', 'CAPTURE') and completed_at >= ?)
+                        -
+                        (select coalesce(sum(amount_minor), 0) from refund_transaction
+                          where tenant_id = ? and status = 'SUCCEEDED' and completed_at >= ?)
+                    """, Long.class, tenantId, JdbcTimes.timestamp(todayStart),
+                    tenantId, JdbcTimes.timestamp(todayStart));
             return new DashboardSummary(devices.online(), devices.total(), value(available),
                     value(activeOrders), value(revenue));
         });
