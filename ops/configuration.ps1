@@ -107,7 +107,21 @@ function Get-DeploymentConfigurationSchema {
 
 function Get-DeploymentConfigurationPath {
     param([Parameter(Mandatory = $true)][string]$Workspace)
-    return Join-Path $Workspace '.env.docker'
+    return Join-Path $Workspace '.env'
+}
+
+function Move-LegacyDeploymentConfiguration {
+    param([Parameter(Mandatory = $true)][string]$Workspace)
+
+    $path = Get-DeploymentConfigurationPath -Workspace $Workspace
+    $legacyPath = Join-Path $Workspace '.env.docker'
+    if ((Test-Path -LiteralPath $path -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $legacyPath -PathType Leaf)) {
+        return $false
+    }
+    Move-Item -LiteralPath $legacyPath -Destination $path
+    Write-Host 'Migrated .env.docker to .env. All existing credentials were preserved.' -ForegroundColor Yellow
+    return $true
 }
 
 function New-RandomBytes {
@@ -275,6 +289,7 @@ function Set-DatabaseIdentityConfiguration {
 function Initialize-DeploymentConfiguration {
     param([Parameter(Mandatory = $true)][string]$Workspace)
 
+    $migrated = Move-LegacyDeploymentConfiguration -Workspace $Workspace
     $path = Get-DeploymentConfigurationPath -Workspace $Workspace
     $created = -not (Test-Path -LiteralPath $path -PathType Leaf)
     $values = Read-DeploymentConfiguration -Path $path
@@ -282,12 +297,15 @@ function Initialize-DeploymentConfiguration {
     $hadExternalIssuer = $values.ContainsKey('OIDC_ISSUER_URI') -and
         -not [string]::IsNullOrWhiteSpace([string]$values['OIDC_ISSUER_URI'])
     if ($values.ContainsKey('PILOT_DEVICE_SECRET')) {
-        throw 'Legacy pilot/demo configuration detected. Delete .env.docker and run config-manager.cmd init to create a clean deployment configuration.'
+        throw 'Legacy pilot/demo configuration detected. Delete .env and run config-manager.cmd init to create a clean deployment configuration.'
     }
 
     $changed = $created
     foreach ($definition in $script:DeploymentConfigurationSchema) {
-        if (-not $values.ContainsKey($definition.Name)) {
+        $missing = -not $values.ContainsKey($definition.Name)
+        $generatedValueMissing = -not [string]::IsNullOrWhiteSpace($definition.Generator) -and
+            [string]::IsNullOrWhiteSpace([string]$values[$definition.Name])
+        if ($missing -or $generatedValueMissing) {
             $values[$definition.Name] = New-GeneratedConfigurationValue -Definition $definition
             $changed = $true
         }
@@ -340,6 +358,7 @@ function Initialize-DeploymentConfiguration {
         Values = $values
         Created = $created
         Changed = $changed
+        Migrated = $migrated
     }
 }
 

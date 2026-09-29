@@ -33,12 +33,13 @@
 在仓库根目录运行：
 
 ```powershell
-.\config-manager.cmd wizard
+.\config-manager.cmd init
+notepad.exe .env
 .\config-manager.cmd validate
 .\config-manager.cmd export-miniapp
 ```
 
-向导中至少完成以下设置：
+直接在根目录 `.env` 中至少完成以下设置：
 
 - 启用微信小程序登录；
 - 填写 `WECHAT_APP_ID`、`WECHAT_APP_SECRET` 和 `WECHAT_TENANT_CODE`；

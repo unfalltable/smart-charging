@@ -18,7 +18,7 @@ if ($EnableDeviceGateway) {
 }
 $configurationErrors = @(Test-DeploymentConfiguration -Workspace $workspace -Values $configuration)
 if ($configurationErrors.Count -gt 0) {
-    throw "Deployment configuration is invalid. Run config-manager.cmd wizard, then config-manager.cmd validate.`n - $($configurationErrors -join "`n - ")"
+    throw "Deployment configuration is invalid. Edit .env, then run config-manager.cmd validate.`n - $($configurationErrors -join "`n - ")"
 }
 [void](Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $configuration)
 

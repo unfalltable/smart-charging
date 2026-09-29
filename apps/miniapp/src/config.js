@@ -10,7 +10,7 @@ const profiles = require('./deployment.config')
 
 const selected = profiles[environmentVersion()]
 if (!selected || !selected.apiBase || !selected.tenantCode) {
-  throw new Error('小程序部署配置缺失：请运行 config-manager.cmd wizard 配置真实 API 地址和租户编码')
+  throw new Error('小程序部署配置缺失：请编辑根目录 .env，再运行 config-manager.cmd export-miniapp')
 }
 if (!/^https:\/\//i.test(selected.apiBase)) {
   throw new Error('小程序 API 必须使用 HTTPS')

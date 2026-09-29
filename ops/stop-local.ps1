@@ -3,13 +3,15 @@ param([switch]$DeleteData)
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $PSScriptRoot 'compose.local.yaml'
-$environmentFile = Join-Path $workspace '.env.docker'
+. (Join-Path $PSScriptRoot 'configuration.ps1')
+[void](Move-LegacyDeploymentConfiguration -Workspace $workspace)
+$environmentFile = Get-DeploymentConfigurationPath -Workspace $workspace
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker was not found.'
 }
 if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
-    throw '.env.docker was not found. Run docker-start.cmd first.'
+    throw '.env was not found. Run config-manager.cmd init first.'
 }
 
 # Docker Compose resolves and validates published ports even for `down`. Legacy
@@ -41,9 +43,8 @@ try {
     & docker @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Docker Compose shutdown failed.' }
     if ($DeleteData) {
-        Remove-Item -LiteralPath $environmentFile -Force
         Write-Host 'Containers and local Docker data volumes were deleted.' -ForegroundColor Yellow
-        Write-Host 'The local secret file was also removed; the next startup will generate new secrets.' -ForegroundColor Yellow
+        Write-Host 'The root .env file was preserved.' -ForegroundColor Green
     }
     else {
         Write-Host 'Containers stopped. Database data remains in Docker volumes.' -ForegroundColor Green

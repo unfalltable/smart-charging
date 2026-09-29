@@ -24,7 +24,7 @@ function Get-ProvisioningFailureDetail {
 
 $configurationPath = Get-DeploymentConfigurationPath -Workspace $workspace
 if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf)) {
-    throw '.env.docker was not found. Run docker-start.cmd first.'
+    throw '.env was not found. Run config-manager.cmd init, edit .env, then start the platform.'
 }
 $configuration = Read-DeploymentConfiguration -Path $configurationPath
 if ([string]$configuration['IDENTITY_PROVIDER_MODE'] -ne 'database') {

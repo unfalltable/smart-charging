@@ -8,11 +8,12 @@
 
 ```powershell
 .\config-manager.cmd init
+notepad.exe .env
 .\config-manager.cmd validate
 .\docker-start.cmd
 ```
 
-默认使用内置数据库账号，不需要 Keycloak、外部 OIDC、Java、Maven 或 Node.js。`init` 会生成 Git 忽略的 `.env.docker`、服务秘密和唯一的平台超级管理员初始凭据。`validate` 会检查必填值、URL、端口、密钥、JSON、证书目录和已启用能力。
+默认使用内置数据库账号，不需要 Keycloak、外部 OIDC、Java、Maven 或 Node.js。`init` 会生成 Git 忽略的 `.env`、服务秘密和唯一的平台超级管理员初始凭据。之后直接编辑 `.env`；`validate` 会检查必填值、URL、端口、密钥、JSON、证书目录和已启用能力。
 
 启动完成后的本机地址：
 
@@ -54,10 +55,10 @@ Remove-Variable platformPassword
 .\docker-stop.cmd -DeleteData
 ```
 
-该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷以及 `.env.docker`，无法恢复。旧版 `IDENTITY_PROVIDER_MODE=bundled` 配置在更新后会自动迁移为 `database`，并生成符合新策略的平台初始密码；业务数据卷不会因此自动删除。
+该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷，无法恢复，但会保留你维护的 `.env`。旧版 `.env.docker` 会在首次运行新脚本时自动重命名为 `.env`，已有账号和秘密不会丢失。旧版 `IDENTITY_PROVIDER_MODE=bundled` 配置会自动迁移为 `database`；业务数据卷不会因此自动删除。
 
 ## 真实设备、微信和支付
 
-设备网关默认关闭。准备厂家协议适配器及 `tls.crt`、`tls.key`、`ca.crt` 后，通过配置向导启用。取得真实微信资质后，再配置小程序 AppID/AppSecret、支付 APIv3 密钥与证书、订阅消息模板和正式 HTTPS 地址。系统没有模拟支付成功接口，交易状态只能由验签回调或支付平台主动查询推进。
+设备网关默认关闭。准备厂家协议适配器及 `tls.crt`、`tls.key`、`ca.crt` 后，在 `.env` 中启用。取得真实微信资质后，在同一文件中配置小程序 AppID/AppSecret、支付 APIv3 密钥与证书、订阅消息模板和正式 HTTPS 地址。系统没有模拟支付成功接口，交易状态只能由验签回调或支付平台主动查询推进。
 
 完整字段和生产秘密管理边界见 [统一配置管理](configuration.md)。单机 Compose 不是公网高可用方案，正式上线门禁见 [生产商用门禁](production-readiness.md)。

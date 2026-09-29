@@ -37,8 +37,9 @@ if ($startScript -notmatch 'up --detach --no-build' -or
 if ($startScript -notmatch 'logs --no-color --tail 160 core') {
     throw 'Startup must print core diagnostics when a service dependency fails.'
 }
-if ($stopScript -notmatch 'Remove-Item -LiteralPath \$environmentFile') {
-    throw 'Deleting Docker data must also remove the generated local secret file.'
+if ($stopScript -match 'Remove-Item -LiteralPath \$environmentFile' -or
+        $stopScript -notmatch 'root \.env file was preserved') {
+    throw 'Deleting Docker data must preserve the operator-managed root .env file.'
 }
 foreach ($cleanupOverride in @('ADMIN_WEB_PORT', 'DEVICE_GATEWAY_PORT', 'NATS_MONITOR_PORT')) {
     if ($stopScript -notmatch $cleanupOverride) {
@@ -78,6 +79,41 @@ foreach ($requiredRevisionCheck in @('/actuator/info', '/build-revision', 'webRe
 
 $configurationScriptPath = Join-Path $workspace 'ops/configuration.ps1'
 . $configurationScriptPath
+$environmentTemplatePath = Join-Path $workspace '.env.example'
+if (-not (Test-Path -LiteralPath $environmentTemplatePath -PathType Leaf)) {
+    throw 'The editable .env.example template is missing.'
+}
+$environmentTemplate = Read-DeploymentConfiguration -Path $environmentTemplatePath
+foreach ($definition in Get-DeploymentConfigurationSchema) {
+    if (-not $environmentTemplate.ContainsKey($definition.Name)) {
+        throw ".env.example is missing $($definition.Name)."
+    }
+}
+foreach ($secretName in @('POSTGRES_PASSWORD', 'VALKEY_PASSWORD', 'QR_SIGNING_SECRET',
+        'DEVICE_CREDENTIAL_MASTER_KEY_BASE64', 'AUTH_JWT_SECRET_BASE64', 'WECHAT_APP_SECRET',
+        'WECHAT_PRIMARY_API_V3_KEY', 'PLATFORM_ADMIN_PASSWORD')) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$environmentTemplate[$secretName])) {
+        throw ".env.example must not contain a real or fixed secret: $secretName"
+    }
+}
+$migrationRoot = Join-Path $workspace ("target/configuration-migration-test-$([guid]::NewGuid().ToString('N'))")
+try {
+    [void](New-Item -ItemType Directory -Path $migrationRoot -Force)
+    $legacyPath = Join-Path $migrationRoot '.env.docker'
+    [IO.File]::WriteAllText($legacyPath, "IDENTITY_PROVIDER_MODE=database`r`n")
+    if (-not (Move-LegacyDeploymentConfiguration -Workspace $migrationRoot)) {
+        throw 'Legacy .env.docker was not migrated.'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $migrationRoot '.env') -PathType Leaf) -or
+            (Test-Path -LiteralPath $legacyPath)) {
+        throw 'Legacy configuration migration did not leave exactly one root .env file.'
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $migrationRoot -PathType Container) {
+        [IO.Directory]::Delete($migrationRoot, $true)
+    }
+}
 $testRoot = Join-Path $workspace ("target/configuration-test-$([guid]::NewGuid().ToString('N'))")
 $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)
 $allowedPrefix = [IO.Path]::GetFullPath((Join-Path $workspace 'target/configuration-test-'))
@@ -87,6 +123,9 @@ if (-not $resolvedTestRoot.StartsWith($allowedPrefix, [StringComparison]::Ordina
 try {
     [void](New-Item -ItemType Directory -Path (Join-Path $testRoot 'apps/miniapp/src') -Force)
     $state = Initialize-DeploymentConfiguration -Workspace $testRoot
+    if ([IO.Path]::GetFileName($state.Path) -ne '.env') {
+        throw 'Deployment configuration must use the root .env file.'
+    }
     if ($state.Values['IDENTITY_PROVIDER_MODE'] -ne 'database') {
         throw 'Fresh installations must default to built-in database identity.'
     }
