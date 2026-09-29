@@ -1,11 +1,23 @@
 <view class="page">
-  <view wx:if="{{!loading && orders.length === 0}}" class="empty">还没有充电订单</view>
+  <view wx:if="{{!loggedIn}}" class="card empty-state">
+    <text class="state-title">登录后查看订单</text>
+    <text class="state-message">微信登录会自动创建消费者账号，不需要单独注册。</text>
+    <button class="primary state-action" hover-class="button-pressed" bindtap="goToLogin">去登录</button>
+  </view>
+  <view wx:elif="{{loading && orders.length === 0}}" class="loading-state" aria-live="polite">正在加载订单…</view>
+  <view wx:elif="{{errorMessage && orders.length === 0}}" class="card error-state" aria-live="assertive">
+    <text class="state-title">订单加载失败</text><text class="state-message">{{errorMessage}}</text>
+    <button class="secondary state-action" hover-class="button-pressed" bindtap="loadOrders">重新加载</button>
+  </view>
+  <view wx:elif="{{orders.length === 0}}" class="card empty-state">
+    <text class="state-title">还没有充电订单</text><text class="state-message">扫描充电桩二维码即可开始第一笔充电。</text>
+  </view>
   <view wx:for="{{orders}}" wx:key="orderId" class="card order">
-    <view class="head"><text>{{item.stationName}}</text><text class="status">{{item.status}}</text></view>
+    <view class="head"><text>{{item.stationName}}</text><text class="status">{{item.statusText}}</text></view>
     <text class="meta">{{item.connectorNo}} 号位 · {{item.orderNo}}</text>
     <view class="numbers"><text>{{item.energyKwh}} kWh</text><text class="amount">¥ {{item.amountYuan}}</text></view>
     <text wx:if="{{item.paidAmountMinor > 0}}" class="paid">已支付 ¥ {{item.paidYuan}}</text>
-    <button wx:if="{{item.canStop}}" class="stop" data-order-id="{{item.orderId}}" bindtap="stopOrder">停止充电</button>
-    <button wx:if="{{item.canPay}}" class="primary pay" data-order-id="{{item.orderId}}" bindtap="payOrder">立即支付</button>
+    <button wx:if="{{item.canStop}}" class="stop" data-order-id="{{item.orderId}}" disabled="{{actionOrderId}}" loading="{{actionOrderId === item.orderId}}" hover-class="button-pressed" bindtap="stopOrder">停止充电</button>
+    <button wx:if="{{item.canPay}}" class="primary pay" data-order-id="{{item.orderId}}" disabled="{{actionOrderId}}" loading="{{actionOrderId === item.orderId}}" hover-class="button-pressed" bindtap="payOrder">立即支付</button>
   </view>
 </view>

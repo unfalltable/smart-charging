@@ -1,1 +1,1 @@
-{ "navigationBarTitleText": "充电订单" }
+{ "navigationBarTitleText": "充电订单", "enablePullDownRefresh": true }

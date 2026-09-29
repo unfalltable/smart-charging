@@ -5,6 +5,7 @@ $scripts = @(
     'ops/stop-local.ps1',
     'ops/configuration.ps1',
     'ops/manage-config.ps1',
+    'ops/upload-miniapp.ps1',
     'ops/http-response.ps1',
     'ops/provision-tenant.ps1'
 )
@@ -152,6 +153,16 @@ try {
     $miniappText = Get-Content -LiteralPath $miniappPath -Raw
     if ($miniappText.Contains([string]$roundTrip['POSTGRES_PASSWORD']) -or $miniappText -notmatch 'module.exports') {
         throw 'Mini-program export is invalid or contains a server-side secret.'
+    }
+    $privateProjectPath = Join-Path $testRoot 'apps/miniapp/project.private.config.json'
+    if (-not (Test-Path -LiteralPath $privateProjectPath -PathType Leaf)) {
+        throw 'Mini-program export did not generate private project configuration.'
+    }
+    $privateProject = Get-Content -LiteralPath $privateProjectPath -Raw | ConvertFrom-Json
+    if ($privateProject.setting.urlCheck -ne $true -or
+            ([string]$privateProject.PSObject.Properties['appSecret']).Length -gt 0 -or
+            (Get-Content -LiteralPath $privateProjectPath -Raw).Contains([string]$roundTrip['POSTGRES_PASSWORD'])) {
+        throw 'Mini-program private project configuration is unsafe.'
     }
 }
 finally {

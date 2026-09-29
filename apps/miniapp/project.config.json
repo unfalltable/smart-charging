@@ -2,14 +2,15 @@
   "description": "Smart charging WeChat mini program",
   "miniprogramRoot": "src/",
   "projectname": "smart-charging-wechat",
-  "appid": "touristappid",
   "compileType": "miniprogram",
   "setting": {
-    "urlCheck": false,
+    "urlCheck": true,
     "es6": true,
     "enhance": true,
     "postcss": true,
     "minified": true,
-    "checkSiteMap": true
+    "checkSiteMap": true,
+    "minifyWXSS": true,
+    "minifyWXML": true
   }
 }

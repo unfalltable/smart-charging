@@ -1,5 +1,6 @@
 package io.smartcharge.platform.identity;
 
+import io.smartcharge.platform.shared.domain.AuthenticationFailureException;
 import io.smartcharge.platform.shared.domain.DomainException;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
@@ -40,11 +41,17 @@ final class MiniappAuthController {
                 .orElseThrow(() -> new DomainException("Mini-program identity provider is not configured"));
         MiniappIdentityProvider.ExternalIdentity identity = provider.exchange(request.code());
         return tenantJdbc.readWriteAs(tenantId, () -> {
-            UUID customerId = jdbc.query("""
-                    select customer_id from customer_identity
-                     where tenant_id=? and provider=? and provider_subject=?
-                    """, (result, row) -> result.getObject(1, UUID.class), tenantId,
+            ExistingCustomer existing = jdbc.query("""
+                    select ci.customer_id, c.status from customer_identity ci
+                      join customer c on c.tenant_id=ci.tenant_id and c.id=ci.customer_id
+                     where ci.tenant_id=? and ci.provider=? and ci.provider_subject=?
+                    """, (result, row) -> new ExistingCustomer(
+                    result.getObject("customer_id", UUID.class), result.getString("status")), tenantId,
                     request.provider(), identity.providerSubject()).stream().findFirst().orElse(null);
+            if (existing != null && !"ACTIVE".equals(existing.status())) {
+                throw new AuthenticationFailureException("Customer account is not active");
+            }
+            UUID customerId = existing == null ? null : existing.customerId();
             if (customerId == null) {
                 customerId = UUID.randomUUID();
                 jdbc.update("""
@@ -83,4 +90,5 @@ final class MiniappAuthController {
                         @NotBlank @jakarta.validation.constraints.Size(max = 128) String code,
                         @NotBlank @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,62}") String tenantCode) { }
     record RefreshRequest(@NotNull UUID tenantId, @NotBlank @jakarta.validation.constraints.Size(min = 40, max = 100) String refreshToken) { }
+    record ExistingCustomer(UUID customerId, String status) { }
 }

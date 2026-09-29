@@ -1,12 +1,16 @@
 <view class="page">
-  <view wx:if="{{loading}}" class="empty">正在加载…</view>
-  <view wx:elif="{{!agreements.length}}" class="empty">暂无待签署协议</view>
+  <view wx:if="{{loading && !agreements.length}}" class="loading-state" aria-live="polite">正在加载协议…</view>
+  <view wx:elif="{{errorMessage && !agreements.length}}" class="card error-state" aria-live="assertive">
+    <text class="state-title">协议加载失败</text><text class="state-message">{{errorMessage}}</text>
+    <button class="secondary state-action" hover-class="button-pressed" bindtap="loadAgreements">重新加载</button>
+  </view>
+  <view wx:elif="{{!agreements.length}}" class="card empty-state"><text class="state-title">暂无有效协议</text><text class="state-message">平台尚未发布需要确认的协议。</text></view>
   <view wx:for="{{agreements}}" wx:key="id" class="card">
     <view class="title">{{item.title}}</view>
     <view class="meta">版本 {{item.version}}</view>
     <view class="actions">
-      <button size="mini" data-url="{{item.contentUrl}}" bindtap="open">查看全文</button>
-      <button wx:if="{{!item.accepted}}" size="mini" type="primary" data-id="{{item.id}}" bindtap="accept">同意</button>
+      <button class="secondary" data-url="{{item.contentUrl}}" hover-class="button-pressed" bindtap="open">查看全文</button>
+      <button wx:if="{{!item.accepted}}" class="primary" data-id="{{item.id}}" disabled="{{acceptingId}}" loading="{{acceptingId === item.id}}" hover-class="button-pressed" bindtap="accept">阅读后同意</button>
       <text wx:else class="accepted">已同意</text>
     </view>
   </view>

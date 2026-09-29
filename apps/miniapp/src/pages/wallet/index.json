@@ -1,1 +1,1 @@
-{ "navigationBarTitleText": "余额与支付" }
+{ "navigationBarTitleText": "余额与支付", "enablePullDownRefresh": true }

@@ -102,7 +102,7 @@ function Invoke-ConfigurationWizard {
     $wechatIdentity = Read-YesNo -Prompt 'Enable WeChat mini-program login' -CurrentValue (Get-ConfigurationBoolean -Values $Values -Name 'WECHAT_IDENTITY_ENABLED')
     $Values['WECHAT_IDENTITY_ENABLED'] = $wechatIdentity.ToString().ToLowerInvariant()
     if ($wechatIdentity) {
-        foreach ($name in @('WECHAT_APP_ID', 'WECHAT_APP_SECRET', 'WECHAT_TENANT_CODE')) {
+        foreach ($name in @('WECHAT_APP_ID', 'WECHAT_APP_SECRET', 'WECHAT_TENANT_CODE', 'MINIAPP_DEVTOOLS_CLI_PATH')) {
             Set-ConfigurationValueInteractively -Values $Values -Name $name
         }
         $wechatNotification = Read-YesNo -Prompt 'Enable WeChat subscription messages' -CurrentValue (Get-ConfigurationBoolean -Values $Values -Name 'WECHAT_NOTIFICATION_ENABLED')

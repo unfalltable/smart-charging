@@ -1,4 +1,24 @@
 <view class="page">
-  <form class="card form" bindsubmit="submit"><text class="title">申请电子发票</text><picker range="{{orders}}" range-key="orderNo" value="{{orderIndex}}" bindchange="chooseOrder"><view class="input">{{orders.length ? orders[orderIndex].orderNo : '暂无可开票订单'}}</view></picker><input name="title" placeholder="发票抬头" required/><input name="taxNumber" placeholder="税号（个人可不填）"/><input name="email" type="text" placeholder="接收邮箱" required/><button class="primary" form-type="submit" disabled="{{orders.length === 0}}">提交申请</button></form>
-  <view class="section-title">开票记录</view><view wx:for="{{invoices}}" wx:key="id" class="card invoice"><view><text>{{item.title}}</text><text>{{item.status}}</text></view><text>{{item.email}}</text><text wx:if="{{item.invoiceUrl}}" class="link">电子发票已生成</text></view>
+  <view wx:if="{{loading && !invoices.length}}" class="loading-state" aria-live="polite">正在加载发票信息…</view>
+  <view wx:elif="{{errorMessage && !invoices.length}}" class="card error-state" aria-live="assertive">
+    <text class="state-title">发票信息加载失败</text><text class="state-message">{{errorMessage}}</text>
+    <button class="secondary state-action" hover-class="button-pressed" bindtap="loadData">重新加载</button>
+  </view>
+  <block wx:else>
+  <form class="card form" bindsubmit="submit">
+    <text class="title">申请电子发票</text>
+    <view class="field"><text class="field-label">可开票订单</text><picker range="{{orders}}" range-key="orderNo" value="{{orderIndex}}" bindchange="chooseOrder"><view class="field-control picker-value">{{orders.length ? orders[orderIndex].orderNo : '暂无可开票订单'}}</view></picker></view>
+    <view class="field"><text class="field-label">发票抬头</text><input class="field-control" name="title" maxlength="200" placeholder="个人姓名或单位全称"/></view>
+    <view class="field"><text class="field-label">统一社会信用代码</text><input class="field-control" name="taxNumber" maxlength="20" placeholder="个人抬头可不填"/></view>
+    <view class="field"><text class="field-label">接收邮箱</text><input class="field-control" name="email" type="text" maxlength="254" placeholder="用于接收电子发票"/></view>
+    <button class="primary submit" form-type="submit" disabled="{{orders.length === 0 || submitting}}" loading="{{submitting}}" hover-class="button-pressed">提交申请</button>
+  </form>
+  <view class="section-title">开票记录</view>
+  <view wx:if="{{!invoices.length}}" class="card empty-state compact"><text class="state-title">暂无开票记录</text></view>
+  <view wx:for="{{invoices}}" wx:key="id" class="card invoice">
+    <view class="invoice-head"><text class="invoice-title">{{item.title}}</text><text class="status">{{item.statusText}}</text></view>
+    <text class="meta">金额 ¥ {{item.amountYuan}}</text><text class="meta">接收邮箱 {{item.email}}</text>
+    <button wx:if="{{item.invoiceUrl}}" class="invoice-link" data-url="{{item.invoiceUrl}}" hover-class="menu-pressed" bindtap="openInvoice">查看电子发票</button>
+  </view>
+  </block>
 </view>

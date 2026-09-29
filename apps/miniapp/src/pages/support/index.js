@@ -1,17 +1,43 @@
 const { request } = require('../../utils/api')
+const sessionStore = require('../../utils/session')
+const { statusLabel, showError } = require('../../utils/presenter')
 
 Page({
-  data: { tickets: [] },
+  data: { loading: true, submitting: false, errorMessage: '', title: '', description: '', tickets: [] },
   async onShow() {
-    if (!wx.getStorageSync('access_token')) return wx.showToast({ title: '请先登录', icon: 'none' })
-    try { this.setData({ tickets: await request('/customer/support/tickets') }) }
-    catch (error) { wx.showToast({ title: error?.message || '加载失败', icon: 'none' }) }
+    if (!sessionStore.isLoggedIn()) {
+      wx.showToast({ title: '请先登录', icon: 'none' })
+      setTimeout(() => sessionStore.goToLogin(), 500)
+      return
+    }
+    await this.loadTickets()
   },
-  async submit(event) {
+  async onPullDownRefresh() {
+    try { await this.loadTickets() } finally { wx.stopPullDownRefresh() }
+  },
+  async loadTickets() {
+    this.setData({ loading: true, errorMessage: '' })
     try {
-      await request('/customer/support/tickets', 'POST', event.detail.value)
+      const tickets = await request('/customer/support/tickets')
+      this.setData({ tickets: tickets.map((item) => ({ ...item, statusText: statusLabel(item.status) })) })
+    } catch (error) { this.setData({ errorMessage: error?.message || '工单加载失败' }) }
+    finally { this.setData({ loading: false }) }
+  },
+  updateTitle(event) { this.setData({ title: event.detail.value }) },
+  updateDescription(event) { this.setData({ description: event.detail.value }) },
+  async submit(event) {
+    if (this.data.submitting) return
+    const title = String(event.detail.value.title || '').trim()
+    const description = String(event.detail.value.description || '').trim()
+    if (!title) return wx.showToast({ title: '请填写问题标题', icon: 'none' })
+    if (!description) return wx.showToast({ title: '请填写问题详情', icon: 'none' })
+    this.setData({ submitting: true })
+    try {
+      await request('/customer/support/tickets', { method: 'POST', data: { title, description } })
       wx.showToast({ title: '已提交', icon: 'success' })
-      this.onShow()
-    } catch (error) { wx.showToast({ title: error?.message || '提交失败', icon: 'none' }) }
+      this.setData({ title: '', description: '' })
+      await this.loadTickets()
+    } catch (error) { showError(error, '提交失败') }
+    finally { this.setData({ submitting: false }) }
   }
 })

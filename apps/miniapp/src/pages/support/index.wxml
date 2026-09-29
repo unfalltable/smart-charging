@@ -1,1 +1,19 @@
-<view class="page"><form class="card form" bindsubmit="submit"><text class="title">故障报修或意见反馈</text><input name="title" placeholder="问题标题" required/><textarea name="description" placeholder="请说明设备、端口和问题现象" maxlength="1000" required></textarea><button class="primary" form-type="submit">提交工单</button></form><view class="section-title">我的工单</view><view wx:for="{{tickets}}" wx:key="id" class="card ticket"><view><text>{{item.ticketNo}}</text><text class="status">{{item.status}}</text></view><strong>{{item.title}}</strong><text>{{item.description}}</text></view></view>
+<view class="page">
+  <form class="card form" bindsubmit="submit">
+    <text class="title">故障报修或意见反馈</text>
+    <view class="field"><text class="field-label">问题标题</text><input class="field-control" name="title" value="{{title}}" maxlength="200" placeholder="简要说明问题" bindinput="updateTitle"/></view>
+    <view class="field"><text class="field-label">问题详情</text><textarea class="field-control description" name="description" value="{{description}}" maxlength="1000" placeholder="请说明设备、端口和问题现象" bindinput="updateDescription"></textarea></view>
+    <button class="primary submit" form-type="submit" disabled="{{submitting}}" loading="{{submitting}}" hover-class="button-pressed">提交工单</button>
+  </form>
+  <view class="section-title">我的工单</view>
+  <view wx:if="{{loading && !tickets.length}}" class="loading-state compact" aria-live="polite">正在加载工单…</view>
+  <view wx:elif="{{errorMessage && !tickets.length}}" class="card error-state compact" aria-live="assertive">
+    <text class="state-title">工单加载失败</text><text class="state-message">{{errorMessage}}</text>
+    <button class="secondary state-action" hover-class="button-pressed" bindtap="loadTickets">重新加载</button>
+  </view>
+  <view wx:elif="{{!tickets.length}}" class="card empty-state compact"><text class="state-title">暂无工单</text></view>
+  <view wx:for="{{tickets}}" wx:key="id" class="card ticket">
+    <view class="ticket-head"><text class="ticket-number">{{item.ticketNo}}</text><text class="status">{{item.statusText}}</text></view>
+    <text class="ticket-title">{{item.title}}</text><text class="ticket-description">{{item.description}}</text>
+  </view>
+</view>

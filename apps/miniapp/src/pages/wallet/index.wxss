@@ -1,1 +1,10 @@
-.balance{padding:40rpx;border-radius:24rpx;background:linear-gradient(145deg,#0e886e,#13ae89);color:#fff}.balance text,.balance strong,.balance small{display:block}.balance strong{font-size:58rpx;margin:18rpx 0}.balance small{opacity:.75}.section-title{margin:34rpx 8rpx 18rpx;font-weight:700}.payment{margin-bottom:18rpx;padding:26rpx}.payment view{display:flex;justify-content:space-between;margin:8rpx 0}.payment .status{color:#0f8f78}.empty{text-align:center;color:#899590;margin-top:80rpx}
+.balance{padding:40rpx;border-radius:24rpx;background:linear-gradient(145deg,#08745f,#0b9678);color:#fff}
+.balance-label,.balance-value,.balance-status{display:block}
+.balance-value{font-size:58rpx;margin:18rpx 0;font-weight:700}
+.balance-status{opacity:.86;font-size:24rpx}
+.payment{margin-bottom:18rpx;padding:26rpx}
+.payment view{display:flex;justify-content:space-between;gap:24rpx;margin:8rpx 0}
+.payment .status{color:#087d69;flex-shrink:0}
+.order-no{word-break:break-all}
+.payment-amount{font-weight:700}
+.compact{margin-top:0;padding:40rpx}
