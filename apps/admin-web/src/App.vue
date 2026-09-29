@@ -2,12 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { getJson, loadSessionContext, patchJson, postJson, selectTenant,
   type DashboardSummary, type SessionContext } from './api/client'
-import { changePassword, initializeAuth, login, logout, usesExternalIdentity } from './auth'
+import { changePassword, initializeAuth, login, logout } from './auth'
 
 type Page = 'platform' | 'dashboard' | 'organization' | 'assets' | 'orders' | 'tariffs' | 'finance' | 'operations' | 'legal' | 'access' | 'audit' | 'security'
 type Row = Record<string, unknown>
-type AccessCapabilities = { managedLifecycle: boolean; emailDelivery: boolean; temporaryPasswordFallback: boolean; mfaSupported: boolean; invitationLifespanHours: number }
-type CredentialResult = { delivery: string; temporaryPassword: string | null }
+type CredentialResult = { temporaryPassword: string; user: Row }
 type OrganizationNode = {
   id: string; parentId: string | null; code: string; name: string; organizationType: string
   hierarchyLevel: number; contactName: string | null; contactMobile: string | null; status: string
@@ -42,8 +41,8 @@ const profitSharingReceivers = ref<Row[]>([]), profitSharingPolicies = ref<Row[]
 const profitSharingReturns = ref<Row[]>([])
 const organizationTree = ref<OrganizationTree | null>(null)
 const platformTenants = ref<Row[]>([]), loginEvents = ref<Row[]>([])
-const accessCapabilities = ref<AccessCapabilities>({ managedLifecycle: false, emailDelivery: false, temporaryPasswordFallback: false, mfaSupported: false, invitationLifespanHours: 48 })
 const temporaryCredential = ref<{ username: string; password: string } | null>(null)
+const roleDrafts = reactive<Record<string, string>>({})
 const loginForm = reactive({ username: '', password: '' })
 const passwordForm = reactive({ currentPassword: '', newPassword: '', confirmation: '' })
 const showLoginPassword = ref(false)
@@ -58,9 +57,8 @@ const workOrderForm = reactive({ title: '', description: '', priority: 'NORMAL',
 const refundForm = reactive({ paymentId: '', amountMinor: 0, reason: '' })
 const settlementForm = reactive({ ruleId: '', periodStart: '', periodEnd: '' })
 const merchantForm = reactive({ organizationId: '', channel: 'WECHAT', merchantId: '', applicationId: '', secretReference: '', notifyUrl: '', refundNotifyUrl: '', profitSharingRequired: true, status: 'ACTIVE' })
-const membershipForm = reactive({ username: '', email: '', displayName: '', roleCode: 'OPERATOR', requireMfa: false, expiresInHours: 48 })
-const externalMembershipForm = reactive({ subject: '', displayName: '', roleCode: 'OPERATOR' })
-const tenantForm = reactive({ code: '', displayName: '', adminUsername: '', adminEmail: '', adminDisplayName: '' })
+const membershipForm = reactive({ tenantId: '', username: '', email: '', displayName: '', roleCode: 'OPERATOR' })
+const tenantForm = reactive({ code: '', displayName: '' })
 const settlementRuleForm = reactive({ organizationId: '', name: '', beneficiaryCode: '', shareBasisPoints: 10000, platformServiceFeeBasisPoints: 0, fixedServiceFeeMinor: 0, effectiveFrom: '', effectiveUntil: null as string | null })
 const agreementForm = reactive({ documentCode: 'SERVICE_TERMS', version: '', title: '', contentUrl: '', contentHash: '', effectiveAt: '' })
 const organizationForm = reactive({ parentId: '', code: '', name: '', organizationType: 'SECOND_TIER_PARTNER', contactName: '', contactMobile: '' })
@@ -103,7 +101,7 @@ const titles: Record<Page, [string, string]> = {
   legal: ['LEGAL', '协议与合规'], access: ['ACCESS', '账号与权限'], audit: ['AUDIT', '审计日志'], security: ['SECURITY', '账号安全']
 }
 const visiblePages = computed(() => (Object.keys(titles) as Page[]).filter(item => {
-  if (item === 'platform') return Boolean(sessionContext.value?.platformAdministrator)
+  if (['platform', 'access'].includes(item)) return Boolean(sessionContext.value?.platformAdministrator)
   if (item === 'security') return true
   if (!currentTenant.value) return false
   if (sessionContext.value?.platformAdministrator) return true
@@ -112,7 +110,7 @@ const visiblePages = computed(() => (Object.keys(titles) as Page[]).filter(item 
   if (['dashboard', 'assets', 'orders', 'tariffs'].includes(item)) return roles.some(role => ['TENANT_ADMIN', 'OPERATOR'].includes(role))
   if (item === 'finance') return roles.some(role => ['TENANT_ADMIN', 'FINANCE'].includes(role))
   if (item === 'operations') return roles.some(role => ['TENANT_ADMIN', 'OPERATOR', 'SUPPORT'].includes(role))
-  if (['legal', 'access'].includes(item)) return roles.includes('TENANT_ADMIN')
+  if (item === 'legal') return roles.includes('TENANT_ADMIN')
   if (item === 'audit') return roles.some(role => ['TENANT_ADMIN', 'AUDITOR'].includes(role))
   return false
 }))
@@ -177,11 +175,13 @@ async function fetchPage(target: Page) {
     getJson<Row[]>('/admin/operations/alarms'), getJson<Row[]>('/admin/operations/work-orders')])
   if (target === 'legal') agreements.value = await getJson<Row[]>('/admin/legal/agreements')
   if (target === 'access') {
-    const [capabilities, memberRows] = await Promise.all([
-      getJson<AccessCapabilities>('/admin/access/capabilities'), getJson<Row[]>('/admin/access/memberships')])
-    accessCapabilities.value = capabilities; memberships.value = memberRows
-    loginEvents.value = capabilities.managedLifecycle ? await getJson<Row[]>('/admin/access/login-events') : []
-    membershipForm.expiresInHours = capabilities.invitationLifespanHours || 48
+    [memberships.value, loginEvents.value, platformTenants.value] = await Promise.all([
+      getJson<Row[]>('/platform/users'), getJson<Row[]>('/platform/users/login-events'),
+      getJson<Row[]>('/platform/tenants')])
+    for (const row of memberships.value) roleDrafts[String(row.id)] = String(row.roleCode ?? 'OPERATOR')
+    if (!membershipForm.tenantId || !platformTenants.value.some(row => row.id === membershipForm.tenantId && row.status === 'ACTIVE')) {
+      membershipForm.tenantId = String(platformTenants.value.find(row => row.status === 'ACTIVE')?.id ?? '')
+    }
   }
   if (target === 'audit') auditRows.value = await getJson<Row[]>('/admin/operations/audit')
 }
@@ -227,30 +227,31 @@ async function issueInvoice(row: Row) { const invoiceUrl = prompt('请输入电�
 async function rejectInvoice(row: Row) { const reason = prompt('请输入驳回原因'); if (reason) await refresh('finance', () => postJson(`/admin/finance/invoices/${row.id}/reject`, { reason }), '发票申请已驳回') }
 async function redIssueInvoice(row: Row) { const creditNoteUrl = prompt('请输入红字发票 HTTPS 地址'); const reason = creditNoteUrl ? prompt('请输入红冲原因') : null; if (creditNoteUrl && reason) await refresh('finance', () => postJson(`/admin/finance/invoices/${row.id}/red-issue`, { creditNoteUrl, reason }), '红字发票已开具') }
 async function createAgreement() { await refresh('legal', () => postJson('/admin/legal/agreements', { ...agreementForm, effectiveAt: agreementForm.effectiveAt ? new Date(agreementForm.effectiveAt).toISOString() : new Date().toISOString() }), '协议版本已发布'); agreementForm.version = ''; agreementForm.title = ''; agreementForm.contentUrl = ''; agreementForm.contentHash = '' }
-async function inviteMembership() {
+async function createPlatformUser() {
   await run(async () => {
-    const result = await postJson<CredentialResult & { membership: Row }>('/admin/access/invitations', membershipForm)
-    temporaryCredential.value = result.temporaryPassword ? { username: membershipForm.username, password: result.temporaryPassword } : null
-    Object.assign(membershipForm, { username: '', email: '', displayName: '', roleCode: 'OPERATOR', requireMfa: false, expiresInHours: accessCapabilities.value.invitationLifespanHours || 48 })
+    const result = await postJson<CredentialResult>('/platform/users', membershipForm)
+    temporaryCredential.value = { username: membershipForm.username, password: result.temporaryPassword }
+    Object.assign(membershipForm, { username: '', email: '', displayName: '', roleCode: 'OPERATOR' })
     await fetchPage('access')
-  }, '账号邀请已创建')
+  }, '账号已创建，请安全交付一次性临时密码')
 }
-async function createExternalMembership() { await refresh('access', () => postJson('/admin/access/memberships', externalMembershipForm), '外部身份已授权'); externalMembershipForm.subject = ''; externalMembershipForm.displayName = '' }
-async function changeMembership(row: Row, status: string) { await refresh('access', () => patchJson('/admin/access/memberships/status', { membershipId: row.id, status }), '成员权限已更新') }
-async function recoverMembership(row: Row, resetMfa = false) {
-  const action = resetMfa ? '重置密码与 MFA' : '发起密码恢复'
-  if (!confirm(`确定为 ${row.displayName || row.username || row.subject} ${action}？现有登录会话将立即失效。`)) return
-  await run(async () => {
-    const result = await postJson<CredentialResult>(`/admin/access/memberships/${row.id}/recovery`, { resetMfa })
-    temporaryCredential.value = result.temporaryPassword ? { username: String(row.username ?? ''), password: result.temporaryPassword } : null
-  }, accessCapabilities.value.emailDelivery ? (resetMfa ? '恢复邮件已发送，原 MFA 已撤销' : '密码恢复邮件已发送') : (resetMfa ? '原 MFA 已撤销，一次性临时密码已生成' : '一次性临时密码已生成'))
+async function changeMembership(row: Row, status: string) {
+  const action = status === 'ACTIVE' ? '启用' : '停用'
+  if (!confirm(`确定${action}账号 ${row.username}？该账号的现有登录会话将立即失效。`)) return
+  await refresh('access', () => patchJson(`/platform/users/${row.id}/status`, { status }), `账号已${action}`)
 }
-async function resendInvitation(row: Row) {
+async function changeRole(row: Row) {
+  await refresh('access', () => patchJson(`/platform/users/${row.id}/role`, {
+    tenantId: row.tenantId, roleCode: roleDrafts[String(row.id)]
+  }), '岗位角色已更新，原登录会话已撤销')
+}
+async function resetPlatformUserPassword(row: Row) {
+  if (!confirm(`确定重置账号 ${row.username} 的密码？现有登录会话将立即失效。`)) return
   await run(async () => {
-    const result = await postJson<CredentialResult>(`/admin/access/memberships/${row.id}/resend`, {})
-    temporaryCredential.value = result.temporaryPassword ? { username: String(row.username ?? ''), password: result.temporaryPassword } : null
+    const result = await postJson<CredentialResult>(`/platform/users/${row.id}/reset-password`, {})
+    temporaryCredential.value = { username: String(row.username), password: result.temporaryPassword }
     await fetchPage('access')
-  }, accessCapabilities.value.emailDelivery ? '邀请邮件已重新发送' : '邀请已续期并生成新临时密码')
+  }, '一次性临时密码已生成')
 }
 async function copyTemporaryCredential() {
   if (!temporaryCredential.value) return
@@ -259,13 +260,12 @@ async function copyTemporaryCredential() {
 }
 async function createTenant() {
   await run(async () => {
-    const result = await postJson<CredentialResult & { adminUsername: string }>('/platform/tenants', tenantForm)
-    temporaryCredential.value = result.temporaryPassword ? { username: result.adminUsername, password: result.temporaryPassword } : null
-    Object.assign(tenantForm, { code: '', displayName: '', adminUsername: '', adminEmail: '', adminDisplayName: '' })
+    await postJson('/platform/tenants', tenantForm)
+    Object.assign(tenantForm, { code: '', displayName: '' })
     sessionContext.value = await loadSessionContext()
     currentTenantId.value = sessionStorage.getItem('tenant_id') ?? ''
     await fetchPage('platform')
-  }, '租户及首位管理员已创建')
+  }, '租户已创建，可在“账号与权限”中分配管理员')
 }
 async function changeTenantStatus(row: Row, status: string) { await refresh('platform', () => patchJson(`/platform/tenants/${row.id}/status`, { status }), '租户状态已更新') }
 async function enterConsole() {
@@ -355,14 +355,12 @@ onBeforeUnmount(() => window.removeEventListener('admin-auth-expired', handleAut
     <form v-else class="login-card" @submit.prevent="beginLogin">
       <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.3 2 5.7 13h5.1L9.9 22l8.4-12h-5.2z" /></svg></span>
       <p>SMART CHARGING</p><h1>充电运营平台</h1>
-      <span>{{ usesExternalIdentity ? '使用企业统一身份登录。' : '使用平台分配的管理账号登录。' }}权限按平台、租户与岗位校验。</span>
+      <span>使用平台分配的管理账号登录，权限按租户与岗位校验。</span>
       <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon />
-      <template v-if="!usesExternalIdentity">
-        <label>用户名<input v-model.trim="loginForm.username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="64" required></label>
-        <label>密码<span class="password-field"><input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" minlength="8" maxlength="128" required><button type="button" :aria-pressed="showLoginPassword" @click="showLoginPassword = !showLoginPassword">{{ showLoginPassword ? '隐藏' : '显示' }}</button></span></label>
-      </template>
-      <button :disabled="loading">{{ loading ? '正在登录…' : (usesExternalIdentity ? '企业账号登录' : '登录') }}</button>
-      <small v-if="!usesExternalIdentity">平台超级管理员由部署配置创建；租户员工账号由上级管理员分配。</small>
+      <label>用户名<input v-model.trim="loginForm.username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="64" required></label>
+      <label>密码<span class="password-field"><input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" minlength="8" maxlength="128" required><button type="button" :aria-pressed="showLoginPassword" @click="showLoginPassword = !showLoginPassword">{{ showLoginPassword ? '隐藏' : '显示' }}</button></span></label>
+      <button :disabled="loading">{{ loading ? '正在登录…' : '登录' }}</button>
+      <small>平台只有一个超级管理员；其他后台账号均由超级管理员创建并分配岗位。</small>
     </form>
   </div>
   <div v-else class="shell">
@@ -393,7 +391,7 @@ onBeforeUnmount(() => window.removeEventListener('admin-auth-expired', handleAut
       <div v-loading="loading">
         <template v-if="page === 'platform'">
           <section class="platform-intro">
-            <div><p class="eyebrow">CONTROL PLANE</p><h2>平台运营方</h2><span>你位于所有租户之上，负责开通下游运营商、暂停服务和查看全局规模。租户管理员只能管理自己租户内的员工与业务。</span></div>
+            <div><p class="eyebrow">CONTROL PLANE</p><h2>平台运营方</h2><span>你位于所有租户之上，负责开通下游运营商、分配后台账号、暂停服务和查看全局规模。</span></div>
             <dl><div><dt>平台角色</dt><dd>平台总管理员</dd></div><div><dt>管理边界</dt><dd>跨租户控制面</dd></div><div><dt>账号策略</dt><dd>管理员分配 · 首次改密</dd></div></dl>
           </section>
           <section class="metrics platform-metrics" aria-label="平台经营概览">
@@ -403,13 +401,10 @@ onBeforeUnmount(() => window.removeEventListener('admin-auth-expired', handleAut
             <article class="revenue"><span>已确认平台服务费</span><strong>{{ money(platformOverview.confirmedPlatformServiceFeeMinor) }}</strong><em>其中 {{ money(platformOverview.pendingPlatformServiceFeeMinor) }} 待结清</em></article>
           </section>
           <form class="panel form tenant-onboarding" @submit.prevent="createTenant">
-            <div class="form-heading"><div><p class="eyebrow">ONBOARDING</p><h2>开通下游租户与首位管理员</h2></div><span>不会开放匿名注册；首位管理员由平台直接邀请。</span></div>
+            <div class="form-heading"><div><p class="eyebrow">ONBOARDING</p><h2>开通下游租户</h2></div><span>创建后在“账号与权限”中为该租户分配管理员或员工。</span></div>
             <label>租户编码<input v-model="tenantForm.code" pattern="[a-z0-9][a-z0-9-]{1,62}" autocomplete="off" placeholder="例如 east-region" required></label>
             <label>运营商名称<input v-model="tenantForm.displayName" autocomplete="organization" placeholder="企业或运营商名称" required></label>
-            <label>管理员用户名<input v-model="tenantForm.adminUsername" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,63}" autocomplete="off" placeholder="用于企业后台登录" required></label>
-            <label>管理员姓名<input v-model="tenantForm.adminDisplayName" autocomplete="name" placeholder="真实姓名" required></label>
-            <label>管理员邮箱<input v-model="tenantForm.adminEmail" type="email" autocomplete="email" placeholder="用于邀请与找回密码" required></label>
-            <button>创建租户并邀请管理员</button>
+            <button :disabled="loading">{{ loading ? '正在创建…' : '创建租户' }}</button>
           </form>
           <section class="panel table-panel"><h2>下游租户</h2><div class="table-scroll"><table class="platform-tenant-table"><thead><tr><th>租户</th><th>编码</th><th>活跃成员</th><th>场站 / 设备</th><th>设备在线</th><th>今日支付 / 净收</th><th>已确认服务费</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="row in platformTenants" :key="String(row.id)"><td><strong>{{ row.displayName }}</strong></td><td class="mono">{{ row.code }}</td><td>{{ row.activeMembers }}</td><td>{{ row.stations }} / {{ row.devices }}</td><td>{{ row.onlineDevices }} / {{ row.devices }}</td><td>{{ row.successfulPaymentsToday }} 笔<small>{{ money(row.todayNetRevenueMinor) }}</small></td><td>{{ money(row.confirmedPlatformServiceFeeMinor) }}<small>待结 {{ money(row.pendingPlatformServiceFeeMinor) }}</small></td><td><span class="state" :class="{ 'state-muted': row.status !== 'ACTIVE' }">{{ row.status }}</span></td><td>{{ date(row.createdAt) }}</td><td><button v-if="row.status === 'ACTIVE'" class="danger-button" @click="changeTenantStatus(row, 'SUSPENDED')">暂停服务</button><button v-else-if="row.status === 'SUSPENDED'" @click="changeTenantStatus(row, 'ACTIVE')">恢复服务</button></td></tr><tr v-if="!platformTenants.length"><td colspan="10" class="empty-cell">尚未开通任何下游租户</td></tr></tbody></table></div></section>
         </template>
@@ -480,27 +475,25 @@ onBeforeUnmount(() => window.removeEventListener('admin-auth-expired', handleAut
           <section class="panel table-panel"><table><thead><tr><th>文档</th><th>版本</th><th>标题</th><th>哈希</th><th>生效时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in agreements" :key="String(row.id)"><td>{{ row.documentCode }}</td><td>{{ row.version }}</td><td>{{ row.title }}</td><td class="mono">{{ short(row.contentHash) }}</td><td>{{ date(row.effectiveAt) }}</td><td>{{ row.status }}</td></tr></tbody></table></section>
         </template>
         <template v-else-if="page === 'access'">
-          <section class="access-policy"><strong>租户账号策略</strong><span>管理员分配 · 首次登录强制改密 · 冻结后立即撤销会话 · 临时密码只显示一次</span><em>{{ accessCapabilities.mfaSupported ? '支持动态口令 MFA' : '当前使用内置账号认证' }}</em></section>
-          <form v-if="accessCapabilities.managedLifecycle" class="panel form account-invite" @submit.prevent="inviteMembership">
-            <div class="form-heading"><div><p class="eyebrow">INVITATION</p><h2>邀请租户员工</h2></div><span>后台账号不允许自行注册，由租户管理员按岗位发放。</span></div>
+          <section class="access-policy"><strong>账号由平台统一管理</strong><span>一个平台超级管理员 · 创建即分配岗位 · 首次登录强制改密 · 停用后立即撤销会话</span><em>内置账号认证</em></section>
+          <form class="panel form account-invite" @submit.prevent="createPlatformUser">
+            <div class="form-heading"><div><p class="eyebrow">ACCOUNT</p><h2>创建后台账号</h2></div><span>不开放自行注册；一次性临时密码只显示一次。</span></div>
+            <label>所属租户<select v-model="membershipForm.tenantId" required><option value="" disabled>请选择租户</option><option v-for="tenant in platformTenants.filter(item => item.status === 'ACTIVE')" :key="String(tenant.id)" :value="String(tenant.id)">{{ tenant.displayName }}</option></select></label>
             <label>登录用户名<input v-model="membershipForm.username" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,63}" autocomplete="off" required></label>
             <label>姓名<input v-model="membershipForm.displayName" autocomplete="name" required></label>
-            <label>企业邮箱<input v-model="membershipForm.email" type="email" autocomplete="email" required></label>
+            <label>邮箱（选填）<input v-model="membershipForm.email" type="email" autocomplete="email"></label>
             <label>岗位角色<select v-model="membershipForm.roleCode"><option value="TENANT_ADMIN">租户管理员</option><option value="OPERATOR">运营</option><option value="FINANCE">财务</option><option value="AUDITOR">审计</option><option value="SUPPORT">客服</option></select></label>
-            <label>邀请有效期（小时）<input v-model.number="membershipForm.expiresInHours" type="number" min="1" max="720" required></label>
-            <label v-if="accessCapabilities.mfaSupported" class="checkbox-label"><input v-model="membershipForm.requireMfa" type="checkbox"><span>要求绑定动态口令</span></label>
-            <button>创建账号</button>
+            <button :disabled="loading || !membershipForm.tenantId">{{ loading ? '正在创建…' : '创建账号' }}</button>
           </form>
-          <form v-else class="panel form horizontal" @submit.prevent="createExternalMembership"><h2>关联外部 OIDC 身份</h2><input v-model="externalMembershipForm.subject" placeholder="外部身份 Subject" required><input v-model="externalMembershipForm.displayName" placeholder="姓名"><select v-model="externalMembershipForm.roleCode"><option>TENANT_ADMIN</option><option>OPERATOR</option><option>FINANCE</option><option>AUDITOR</option><option>SUPPORT</option></select><button>授权</button></form>
-          <section class="panel table-panel"><h2>成员与权限</h2><div class="table-scroll"><table><thead><tr><th>成员</th><th>账号</th><th>角色</th><th v-if="accessCapabilities.mfaSupported">MFA</th><th>邀请状态</th><th>最后登录</th><th>操作</th></tr></thead><tbody><tr v-for="row in memberships" :key="String(row.id)"><td><strong>{{ row.displayName || '—' }}</strong><small>{{ row.email || short(row.subject) }}</small></td><td class="mono">{{ row.username || short(row.subject) }}</td><td>{{ row.roleCode }}</td><td v-if="accessCapabilities.mfaSupported">{{ row.mfaRequired ? '强制' : '可选' }}</td><td><span class="state" :class="{ 'state-muted': row.invitationStatus !== 'ACCEPTED' }">{{ row.invitationStatus }}</span><small v-if="row.inviteExpiresAt">至 {{ date(row.inviteExpiresAt) }}</small></td><td>{{ date(row.lastLoginAt) }}</td><td><button v-if="['PENDING','EXPIRED'].includes(String(row.invitationStatus)) && row.identityManaged" @click="resendInvitation(row)">重发邀请</button><button v-if="row.identityManaged" @click="recoverMembership(row, false)">重置密码</button><button v-if="accessCapabilities.mfaSupported && row.identityManaged && row.mfaRequired" @click="recoverMembership(row, true)">重置 MFA</button><button v-if="row.membershipStatus === 'ACTIVE'" class="danger-button" @click="changeMembership(row, 'DISABLED')">停用</button><button v-else @click="changeMembership(row, 'ACTIVE')">启用</button></td></tr><tr v-if="!memberships.length"><td :colspan="accessCapabilities.mfaSupported ? 7 : 6" class="empty-cell">当前租户还没有后台员工账号</td></tr></tbody></table></div></section>
-          <section v-if="accessCapabilities.managedLifecycle" class="panel table-panel"><h2>登录安全事件</h2><div class="table-scroll"><table><thead><tr><th>时间</th><th>账号</th><th>结果</th><th>来源 IP</th><th>客户端</th><th>风险</th></tr></thead><tbody><tr v-for="row in loginEvents" :key="`${row.occurredAt}-${row.subject}-${row.sourceIp}`"><td>{{ date(row.occurredAt) }}</td><td>{{ row.username || short(row.subject) }}</td><td>{{ row.type }}<small v-if="row.error">{{ row.error }}</small></td><td class="mono">{{ row.sourceIp || '—' }}</td><td>{{ row.clientId || '—' }}</td><td><span class="state" :class="{ 'state-warning': row.risk === 'WARNING' }">{{ row.risk }}</span></td></tr><tr v-if="!loginEvents.length"><td colspan="6" class="empty-cell">暂无该租户成员的登录事件</td></tr></tbody></table></div></section>
+          <section class="panel table-panel"><h2>后台账号</h2><div class="table-scroll"><table><thead><tr><th>姓名</th><th>账号</th><th>所属租户</th><th>岗位角色</th><th>状态</th><th>最后登录</th><th>操作</th></tr></thead><tbody><tr v-for="row in memberships" :key="`${row.id}-${row.tenantId}`"><td><strong>{{ row.displayName || '—' }}</strong><small>{{ row.email || '未填写邮箱' }}</small></td><td class="mono">{{ row.username }}</td><td>{{ row.tenantName || '未分配' }}</td><td><select v-model="roleDrafts[String(row.id)]" :disabled="loading || row.status !== 'ACTIVE'" aria-label="岗位角色"><option value="TENANT_ADMIN">租户管理员</option><option value="OPERATOR">运营</option><option value="FINANCE">财务</option><option value="AUDITOR">审计</option><option value="SUPPORT">客服</option></select><button :disabled="loading || roleDrafts[String(row.id)] === row.roleCode" @click="changeRole(row)">保存</button></td><td><span class="state" :class="{ 'state-muted': row.status !== 'ACTIVE' }">{{ row.status === 'ACTIVE' ? (row.mustChangePassword ? '待首次改密' : '正常') : '已停用' }}</span><small v-if="row.lockedUntil">锁定至 {{ date(row.lockedUntil) }}</small></td><td>{{ date(row.lastLoginAt) }}</td><td><button :disabled="loading || row.status !== 'ACTIVE'" @click="resetPlatformUserPassword(row)">重置密码</button><button v-if="row.status === 'ACTIVE'" :disabled="loading" class="danger-button" @click="changeMembership(row, 'CLOSED')">停用</button><button v-else :disabled="loading" @click="changeMembership(row, 'ACTIVE')">启用</button></td></tr><tr v-if="!memberships.length"><td colspan="7" class="empty-cell">尚未创建后台账号</td></tr></tbody></table></div></section>
+          <section class="panel table-panel"><h2>登录安全事件</h2><div class="table-scroll"><table><thead><tr><th>时间</th><th>账号</th><th>结果</th><th>来源 IP</th><th>原因</th></tr></thead><tbody><tr v-for="row in loginEvents" :key="`${row.occurredAt}-${row.username}-${row.sourceIp}`"><td>{{ date(row.occurredAt) }}</td><td>{{ row.username }}</td><td><span class="state" :class="{ 'state-warning': row.result !== 'SUCCESS' }">{{ row.result }}</span></td><td class="mono">{{ row.sourceIp || '—' }}</td><td>{{ row.failureReason || '—' }}</td></tr><tr v-if="!loginEvents.length"><td colspan="5" class="empty-cell">暂无后台登录事件</td></tr></tbody></table></div></section>
         </template>
         <template v-else-if="page === 'security'">
           <section class="account-summary">
             <div><p class="eyebrow">SIGNED IN AS</p><h2>{{ sessionContext?.displayName || sessionContext?.username }}</h2><span class="mono">{{ sessionContext?.username }}</span></div>
             <dl><div><dt>身份范围</dt><dd>{{ sessionContext?.platformAdministrator ? '平台超级管理员' : `${sessionContext?.tenants.length ?? 0} 个租户` }}</dd></div><div><dt>会话策略</dt><dd>短期令牌 · 可立即撤销</dd></div></dl>
           </section>
-          <form v-if="!usesExternalIdentity" class="panel form security-form" @submit.prevent="submitPasswordChange">
+          <form class="panel form security-form" @submit.prevent="submitPasswordChange">
             <div class="form-heading"><div><p class="eyebrow">PASSWORD</p><h2>修改登录密码</h2></div><span>保存后当前浏览器会续签，其他设备上的管理会话立即失效。</span></div>
             <label>当前密码<span class="password-field light"><input v-model="passwordForm.currentPassword" :type="showCurrentPassword ? 'text' : 'password'" autocomplete="current-password" minlength="8" maxlength="128" required><button type="button" :aria-pressed="showCurrentPassword" @click="showCurrentPassword = !showCurrentPassword">{{ showCurrentPassword ? '隐藏' : '显示' }}</button></span></label>
             <label>新密码<span class="password-field light"><input v-model="passwordForm.newPassword" :type="showNewPassword ? 'text' : 'password'" autocomplete="new-password" minlength="12" maxlength="128" required><button type="button" :aria-pressed="showNewPassword" @click="showNewPassword = !showNewPassword">{{ showNewPassword ? '隐藏' : '显示' }}</button></span></label>
@@ -508,7 +501,6 @@ onBeforeUnmount(() => window.removeEventListener('admin-auth-expired', handleAut
             <ul class="password-rules light-rules" aria-live="polite"><li :class="{ passed: passwordRules.length }">12–128 位</li><li :class="{ passed: passwordRules.upper && passwordRules.lower }">包含大小写字母</li><li :class="{ passed: passwordRules.digit }">包含数字</li><li :class="{ passed: passwordRules.symbol }">包含特殊字符</li><li :class="{ passed: passwordForm.confirmation.length > 0 && passwordForm.newPassword === passwordForm.confirmation }">两次输入一致</li></ul>
             <button :disabled="loading || !passwordReady">{{ loading ? '正在更新…' : '更新密码并撤销其他会话' }}</button>
           </form>
-          <section v-else class="panel external-security"><h2>账号由企业身份平台管理</h2><p>密码、MFA 与账号恢复需要在外部 OIDC 身份平台中完成。本平台不会保存或重置企业密码。</p></section>
         </template>
         <template v-else>
           <section class="panel table-panel"><table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>资源</th><th>资源 ID</th></tr></thead><tbody><tr v-for="row in auditRows" :key="String(row.id)"><td>{{ date(row.occurredAt) }}</td><td>{{ row.actorSubject }}</td><td>{{ row.action }}</td><td>{{ row.resourceType }}</td><td class="mono">{{ row.resourceId }}</td></tr></tbody></table></section>

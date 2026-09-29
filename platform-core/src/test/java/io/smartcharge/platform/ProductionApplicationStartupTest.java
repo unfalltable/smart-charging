@@ -18,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "charging.qr-signing-secret=startup-test-qr-key-at-least-32-characters",
@@ -32,6 +33,7 @@ class ProductionApplicationStartupTest {
     @MockitoBean DataSource dataSource;
     @MockitoBean Flyway flyway;
     @MockitoBean JdbcTemplate jdbc;
+    @MockitoBean PlatformTransactionManager transactionManager;
     @MockitoBean Connection natsConnection;
     @MockitoBean(answers = Answers.RETURNS_DEEP_STUBS) JetStream jetStream;
     @MockitoBean JwtDecoder jwtDecoder;

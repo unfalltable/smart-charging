@@ -57,8 +57,6 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
             roleClause = "m.role_code in ('TENANT_ADMIN','OPERATOR','FINANCE')";
         } else if (path.startsWith("/api/v1/admin/organizations")) {
             roleClause = "m.role_code='TENANT_ADMIN'";
-        } else if (path.startsWith("/api/v1/admin/access/")) {
-            roleClause = "m.role_code='TENANT_ADMIN'";
         } else if (path.startsWith("/api/v1/admin/legal/")) {
             roleClause = "m.role_code='TENANT_ADMIN'";
         } else if (path.startsWith("/api/v1/admin/finance/")) {
@@ -77,7 +75,6 @@ public final class TenantAccessFilter extends OncePerRequestFilter {
                     join tenant t on t.id=m.tenant_id and t.status='ACTIVE'
                     where m.tenant_id=? and u.subject=? and u.status='ACTIVE'
                       and m.status='ACTIVE'
-                      and (m.accepted_at is not null or m.invite_expires_at is null or m.invite_expires_at > now())
                       and %s
                 )
                 """.formatted(roleClause), Boolean.class, tenantId, subject)));

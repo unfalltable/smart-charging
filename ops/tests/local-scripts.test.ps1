@@ -6,8 +6,7 @@ $scripts = @(
     'ops/configuration.ps1',
     'ops/manage-config.ps1',
     'ops/upload-miniapp.ps1',
-    'ops/http-response.ps1',
-    'ops/provision-tenant.ps1'
+    'ops/http-response.ps1'
 )
 foreach ($relativePath in $scripts) {
     $scriptPath = Join-Path $workspace $relativePath
@@ -24,7 +23,6 @@ $startScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/start-local.p
 $stopScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/stop-local.ps1') -Raw
 $compose = Get-Content -LiteralPath (Join-Path $workspace 'ops/compose.local.yaml') -Raw
 $adminDockerfile = Get-Content -LiteralPath (Join-Path $workspace 'ops/admin-web.Dockerfile') -Raw
-$provisionScript = Get-Content -LiteralPath (Join-Path $workspace 'ops/provision-tenant.ps1') -Raw
 
 if ($startScript -match '(?im)^\s*\$home\s*=' -or $startScript -match '(?i)keycloak') {
     throw 'The startup script must not overwrite automatic variables or depend on Keycloak.'
@@ -51,18 +49,14 @@ foreach ($forbidden in @('keycloak:', 'bundled-identity', 'postgres-init-keycloa
         'SPRING_PROFILES_ACTIVE: local', 'simulator:', 'bootstrap:', 'PILE001')) {
     if ($compose.Contains($forbidden)) { throw "Runtime Compose contains obsolete or demo configuration: $forbidden" }
 }
-foreach ($required in @('SPRING_PROFILES_ACTIVE: production', 'IDENTITY_PROVIDER_MODE: ${IDENTITY_PROVIDER_MODE:-database}',
-        'PLATFORM_ADMIN_SUBJECT', 'PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_PASSWORD', 'VITE_AUTH_MODE',
+foreach ($required in @('SPRING_PROFILES_ACTIVE: production',
+        'PLATFORM_ADMIN_SUBJECT', 'PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_PASSWORD',
         'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS',
         'profiles: ["device"]', 'DEVICE_TLS_ENABLED: "true"', 'APP_BUILD_REVISION')) {
     if (-not $compose.Contains($required)) { throw "Runtime Compose setting is missing: $required" }
 }
-if ($adminDockerfile -notmatch 'VITE_AUTH_MODE' -or
-        $adminDockerfile -notmatch 'test "\$VITE_AUTH_MODE" != "external"') {
-    throw 'Admin-web build must support built-in login and validate OIDC only in external mode.'
-}
-foreach ($required in @('/auth/admin/login', '/platform/tenants', 'mustChangePassword')) {
-    if (-not $provisionScript.Contains($required)) { throw "Tenant provisioning helper is missing: $required" }
+if ($adminDockerfile -match 'OIDC|VITE_AUTH_MODE') {
+    throw 'Admin-web build must use the single built-in username/password flow.'
 }
 
 $httpResponseScriptPath = Join-Path $workspace 'ops/http-response.ps1'
@@ -100,7 +94,7 @@ $migrationRoot = Join-Path $workspace ("target/configuration-migration-test-$([g
 try {
     [void](New-Item -ItemType Directory -Path $migrationRoot -Force)
     $legacyPath = Join-Path $migrationRoot '.env.docker'
-    [IO.File]::WriteAllText($legacyPath, "IDENTITY_PROVIDER_MODE=database`r`n")
+    [IO.File]::WriteAllText($legacyPath, "IDENTITY_PROVIDER_MODE=external`r`nOIDC_ISSUER_URI=https://obsolete.invalid`r`n")
     if (-not (Move-LegacyDeploymentConfiguration -Workspace $migrationRoot)) {
         throw 'Legacy .env.docker was not migrated.'
     }
@@ -126,9 +120,6 @@ try {
     if ([IO.Path]::GetFileName($state.Path) -ne '.env') {
         throw 'Deployment configuration must use the root .env file.'
     }
-    if ($state.Values['IDENTITY_PROVIDER_MODE'] -ne 'database') {
-        throw 'Fresh installations must default to built-in database identity.'
-    }
     if ($state.Values['IDENTITY_LOGIN_EVENT_RETENTION_DAYS'] -ne '180' -or
             $state.Values['IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS'] -ne '7') {
         throw 'Fresh configuration must include bounded identity-data retention defaults.'
@@ -142,9 +133,6 @@ try {
     if ($password.Length -lt 32 -or $password -cnotmatch '[A-Z]' -or $password -cnotmatch '[a-z]' -or
             $password -notmatch '[0-9]' -or $password -notmatch '[^A-Za-z0-9]') {
         throw 'Generated platform password does not meet the production password policy.'
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string]$state.Values['OIDC_ISSUER_URI'])) {
-        throw 'Built-in identity must not require an OIDC issuer.'
     }
     $initialErrors = @(Test-DeploymentConfiguration -Workspace $testRoot -Values $state.Values)
     if ($initialErrors.Count -ne 0) {
@@ -168,25 +156,15 @@ try {
         }
     }
 
-    $state.Values['IDENTITY_PROVIDER_MODE'] = 'external'
-    $externalErrors = @(Test-DeploymentConfiguration -Workspace $testRoot -Values $state.Values)
-    if (-not ($externalErrors -match 'OIDC_ISSUER_URI') -or
-            -not ($externalErrors -match 'VITE_OIDC_CLIENT_ID')) {
-        throw 'External identity mode must reject missing OIDC settings.'
-    }
-    $state.Values['OIDC_ISSUER_URI'] = 'https://identity.test.invalid'
-    $state.Values['VITE_OIDC_AUTHORIZATION_ENDPOINT'] = 'https://identity.test.invalid/authorize'
-    $state.Values['VITE_OIDC_TOKEN_ENDPOINT'] = 'https://identity.test.invalid/token'
-    $state.Values['VITE_OIDC_CLIENT_ID'] = 'admin-web-test'
     $state.Values['CUSTOM_EQUALS_VALUE'] = 'first=second=third'
     Write-DeploymentConfiguration -Path $state.Path -Values $state.Values
     $roundTrip = Read-DeploymentConfiguration -Path $state.Path
     if ($roundTrip['CUSTOM_EQUALS_VALUE'] -ne 'first=second=third') {
         throw 'Configuration parser did not preserve equals signs in values.'
     }
-    $externalValidErrors = @(Test-DeploymentConfiguration -Workspace $testRoot -Values $roundTrip)
-    if ($externalValidErrors.Count -ne 0) {
-        throw "Valid external identity configuration was rejected: $($externalValidErrors -join '; ')"
+    $roundTripErrors = @(Test-DeploymentConfiguration -Workspace $testRoot -Values $roundTrip)
+    if ($roundTripErrors.Count -ne 0) {
+        throw "Valid built-in identity configuration was rejected: $($roundTripErrors -join '; ')"
     }
     $miniappPath = Export-MiniappDeploymentConfiguration -Workspace $testRoot -Values $roundTrip
     $miniappText = Get-Content -LiteralPath $miniappPath -Raw

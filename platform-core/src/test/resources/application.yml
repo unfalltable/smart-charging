@@ -22,11 +22,16 @@ charging:
   security:
     app-issuer: https://test.invalid/application
     app-jwt-secret-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-    oidc-issuer-uri: https://test.invalid/oidc
     api-audience: smart-charging-test
     access-token-minutes: 15
     refresh-token-days: 30
   identity:
+    local:
+      subject: 00000000-0000-0000-0000-000000000001
+      username: platform-admin
+      password: Test-only-platform-password-42!
+      display-name: Platform Test Administrator
+      email: platform-admin@test.invalid
     wechat:
       enabled: false
       app-id: ''

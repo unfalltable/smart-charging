@@ -6,14 +6,12 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@ConditionalOnProperty(prefix = "charging.security", name = "identity-provider-mode", havingValue = "database")
 final class AdminAuthenticationService {
     private static final int MAX_FAILURES = 5;
     private static final int LOCK_MINUTES = 15;

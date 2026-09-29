@@ -30,18 +30,9 @@ $script:DeploymentConfigurationSchema = @(
     New-ConfigurationDefinition 'DEVICE_CREDENTIAL_MASTER_KEY_BASE64' 'Core secrets' $true $true '' 'Base64_32' 'Device credential AES-256 master key'
     New-ConfigurationDefinition 'AUTH_JWT_SECRET_BASE64' 'Core secrets' $true $true '' 'Base64_32' 'Platform access-token signing key'
 
-    New-ConfigurationDefinition 'IDENTITY_PROVIDER_MODE' 'Identity' $true $false 'database' '' 'Identity provider mode: database or external'
     New-ConfigurationDefinition 'APP_JWT_ISSUER' 'Identity' $true $false 'http://127.0.0.1:8088' '' 'Issuer for platform-issued tokens'
-    New-ConfigurationDefinition 'OIDC_ISSUER_URI' 'Identity' $false $false '' '' 'External OIDC issuer URI'
-    New-ConfigurationDefinition 'OIDC_JWK_SET_URI' 'Identity' $false $false '' '' 'Optional internal OIDC JSON Web Key Set URI'
     New-ConfigurationDefinition 'API_JWT_AUDIENCE' 'Identity' $true $false 'smart-charging-api' '' 'API JWT audience'
     New-ConfigurationDefinition 'ALLOWED_ORIGINS' 'Identity' $true $false 'http://127.0.0.1:8088,http://localhost:8088' '' 'Comma-separated admin web origins'
-    New-ConfigurationDefinition 'VITE_OIDC_AUTHORIZATION_ENDPOINT' 'Identity' $false $false '' '' 'OIDC authorization endpoint'
-    New-ConfigurationDefinition 'VITE_OIDC_TOKEN_ENDPOINT' 'Identity' $false $false '' '' 'OIDC token endpoint'
-    New-ConfigurationDefinition 'VITE_OIDC_CLIENT_ID' 'Identity' $false $false '' '' 'Admin web OIDC public client ID'
-    New-ConfigurationDefinition 'VITE_OIDC_REDIRECT_URI' 'Identity' $false $false 'http://127.0.0.1:8088/auth/callback' '' 'Admin web login callback URI'
-    New-ConfigurationDefinition 'VITE_OIDC_SCOPES' 'Identity' $false $false 'openid' '' 'OIDC scopes requested by the admin web'
-    New-ConfigurationDefinition 'IDENTITY_INVITATION_LIFESPAN_HOURS' 'Identity' $true $false '48' '' 'Account invitation validity in hours'
     New-ConfigurationDefinition 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS' 'Identity' $true $false '180' '' 'Administrator login-event retention in days'
     New-ConfigurationDefinition 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS' 'Identity' $true $false '7' '' 'Expired refresh-token retention in days'
 
@@ -249,36 +240,17 @@ function Write-DeploymentConfiguration {
     [System.IO.File]::WriteAllLines($Path, $lines, $utf8WithoutBom)
 }
 
-function Set-DatabaseIdentityConfiguration {
+function Set-LocalIdentityConfiguration {
     param([Parameter(Mandatory = $true)][hashtable]$Values)
-
-    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -ne 'database') {
-        return $false
-    }
 
     $adminPort = [string]$Values['ADMIN_WEB_PORT']
     $changed = $false
     $localDefaults = [ordered]@{
         APP_JWT_ISSUER = "http://127.0.0.1:$adminPort"
         ALLOWED_ORIGINS = "http://127.0.0.1:$adminPort,http://localhost:$adminPort"
-        VITE_OIDC_REDIRECT_URI = "http://127.0.0.1:$adminPort/auth/callback"
     }
     foreach ($entry in $localDefaults.GetEnumerator()) {
         if ([string]::IsNullOrWhiteSpace([string]$Values[$entry.Key])) {
-            $Values[$entry.Key] = $entry.Value
-            $changed = $true
-        }
-    }
-    $databaseOnly = [ordered]@{
-        OIDC_ISSUER_URI = ''
-        OIDC_JWK_SET_URI = ''
-        VITE_OIDC_AUTHORIZATION_ENDPOINT = ''
-        VITE_OIDC_TOKEN_ENDPOINT = ''
-        VITE_OIDC_CLIENT_ID = ''
-        VITE_OIDC_SCOPES = 'openid'
-    }
-    foreach ($entry in $databaseOnly.GetEnumerator()) {
-        if ([string]$Values[$entry.Key] -ne $entry.Value) {
             $Values[$entry.Key] = $entry.Value
             $changed = $true
         }
@@ -293,9 +265,6 @@ function Initialize-DeploymentConfiguration {
     $path = Get-DeploymentConfigurationPath -Workspace $Workspace
     $created = -not (Test-Path -LiteralPath $path -PathType Leaf)
     $values = Read-DeploymentConfiguration -Path $path
-    $hadIdentityMode = $values.ContainsKey('IDENTITY_PROVIDER_MODE')
-    $hadExternalIssuer = $values.ContainsKey('OIDC_ISSUER_URI') -and
-        -not [string]::IsNullOrWhiteSpace([string]$values['OIDC_ISSUER_URI'])
     if ($values.ContainsKey('PILOT_DEVICE_SECRET')) {
         throw 'Legacy pilot/demo configuration detected. Delete .env and run config-manager.cmd init to create a clean deployment configuration.'
     }
@@ -311,19 +280,8 @@ function Initialize-DeploymentConfiguration {
         }
     }
 
-    if (-not $hadIdentityMode -and $hadExternalIssuer) {
-        $values['IDENTITY_PROVIDER_MODE'] = 'external'
-        $changed = $true
-    }
-    if ([string]$values['IDENTITY_PROVIDER_MODE'] -eq 'bundled') {
-        $values['IDENTITY_PROVIDER_MODE'] = 'database'
-        $adminPasswordDefinition = $script:DeploymentConfigurationSchema |
-            Where-Object { $_.Name -eq 'PLATFORM_ADMIN_PASSWORD' } | Select-Object -First 1
-        $values['PLATFORM_ADMIN_PASSWORD'] = New-GeneratedConfigurationValue -Definition $adminPasswordDefinition
-        $changed = $true
-    }
     $configuredAdminPassword = [string]$values['PLATFORM_ADMIN_PASSWORD']
-    if ([string]$values['IDENTITY_PROVIDER_MODE'] -eq 'database' -and $values.ContainsKey('KEYCLOAK_IMAGE') -and
+    if ($values.ContainsKey('KEYCLOAK_IMAGE') -and
             ($configuredAdminPassword -cnotmatch '[A-Z]' -or $configuredAdminPassword -notmatch '[^A-Za-z0-9]')) {
         $adminPasswordDefinition = $script:DeploymentConfigurationSchema |
             Where-Object { $_.Name -eq 'PLATFORM_ADMIN_PASSWORD' } | Select-Object -First 1
@@ -337,7 +295,10 @@ function Initialize-DeploymentConfiguration {
         'KEYCLOAK_IMAGE', 'KEYCLOAK_PORT', 'KEYCLOAK_REALM', 'KEYCLOAK_CLIENT_ID',
         'KEYCLOAK_PROVISIONING_CLIENT_ID', 'KEYCLOAK_PROVISIONING_CLIENT_SECRET',
         'KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME',
-        'KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD', 'KEYCLOAK_IMPORT_DIRECTORY', 'INITIAL_TENANT_ID'
+        'KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD', 'KEYCLOAK_IMPORT_DIRECTORY', 'INITIAL_TENANT_ID',
+        'IDENTITY_PROVIDER_MODE', 'OIDC_ISSUER_URI', 'OIDC_JWK_SET_URI',
+        'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_CLIENT_ID',
+        'VITE_OIDC_REDIRECT_URI', 'VITE_OIDC_SCOPES', 'IDENTITY_INVITATION_LIFESPAN_HOURS'
     )
     foreach ($name in $obsoleteIdentityNames) {
         if ($values.ContainsKey($name)) {
@@ -345,7 +306,7 @@ function Initialize-DeploymentConfiguration {
             $changed = $true
         }
     }
-    if (Set-DatabaseIdentityConfiguration -Values $values) {
+    if (Set-LocalIdentityConfiguration -Values $values) {
         $changed = $true
     }
 
@@ -425,27 +386,17 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    if (@('database', 'external') -notcontains [string]$Values['IDENTITY_PROVIDER_MODE']) {
-        $errors.Add('IDENTITY_PROVIDER_MODE: value must be database or external')
-    }
-
     foreach ($name in @('WECHAT_IDENTITY_ENABLED', 'WECHAT_NOTIFICATION_ENABLED', 'WECHAT_PAYMENT_ENABLED', 'DEVICE_GATEWAY_ENABLED')) {
         if ($Values.ContainsKey($name) -and @('true', 'false') -notcontains [string]$Values[$name]) {
             $errors.Add("$($name): value must be true or false")
         }
     }
 
-    foreach ($name in @('APP_JWT_ISSUER', 'OIDC_ISSUER_URI', 'VITE_OIDC_AUTHORIZATION_ENDPOINT', 'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_REDIRECT_URI')) {
+    foreach ($name in @('APP_JWT_ISSUER')) {
         if ($Values.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string]$Values[$name]) -and -not (Test-AbsoluteSecureUrl -Value ([string]$Values[$name]))) {
             $errors.Add("$($name): use an absolute HTTPS URL; HTTP is allowed only for loopback development")
         }
     }
-    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'external' -and
-            -not [string]::IsNullOrWhiteSpace([string]$Values['OIDC_JWK_SET_URI']) -and
-            -not (Test-AbsoluteHttpsUrl -Value ([string]$Values['OIDC_JWK_SET_URI']))) {
-        $errors.Add('OIDC_JWK_SET_URI: external key-set URI must use HTTPS')
-    }
-
     if ($Values.ContainsKey('ALLOWED_ORIGINS')) {
         foreach ($origin in ([string]$Values['ALLOWED_ORIGINS']).Split(',')) {
             if (-not (Test-AbsoluteSecureUrl -Value $origin.Trim())) {
@@ -489,7 +440,7 @@ function Test-DeploymentConfiguration {
         }
     }
 
-    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_INVITATION_LIFESPAN_HOURS', 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS', 'PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS')) {
+    foreach ($name in @('DATABASE_POOL_SIZE', 'DATABASE_POOL_MIN_IDLE', 'ACCESS_TOKEN_MINUTES', 'REFRESH_TOKEN_DAYS', 'RATE_LIMIT_DEFAULT_PER_MINUTE', 'RATE_LIMIT_PUBLIC_PER_MINUTE', 'RATE_LIMIT_LOGIN_PER_MINUTE', 'OUTBOX_PUBLISHER_DELAY_MS', 'IDENTITY_LOGIN_EVENT_RETENTION_DAYS', 'IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS', 'PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS')) {
         $number = 0
         if (-not [int]::TryParse([string]$Values[$name], [ref]$number) -or $number -lt 1) {
             $errors.Add("$($name): value must be a positive integer")
@@ -505,36 +456,25 @@ function Test-DeploymentConfiguration {
         $errors.Add('TRACING_SAMPLE_RATE: value must be between 0 and 1')
     }
 
-    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'database') {
-        foreach ($name in @('PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME',
-                'PLATFORM_ADMIN_SUBJECT', 'PLATFORM_ADMIN_PASSWORD')) {
-            if ([string]::IsNullOrWhiteSpace([string]$Values[$name])) {
-                $errors.Add("$($name): required when IDENTITY_PROVIDER_MODE=database")
-            }
-        }
-        if ([string]$Values['PLATFORM_ADMIN_USERNAME'] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$') {
-            $errors.Add('PLATFORM_ADMIN_USERNAME: use 3 to 64 letters, digits, dots, underscores or hyphens')
-        }
-        $adminPassword = [string]$Values['PLATFORM_ADMIN_PASSWORD']
-        if ($adminPassword.Length -lt 12 -or $adminPassword -cnotmatch '[A-Z]' -or
-                $adminPassword -cnotmatch '[a-z]' -or $adminPassword -notmatch '[0-9]' -or
-                $adminPassword -notmatch '[^A-Za-z0-9]') {
-            $errors.Add('PLATFORM_ADMIN_PASSWORD: use at least 12 characters with upper/lower case, number and symbol')
-        }
-        $identifier = [guid]::Empty
-        if (-not [guid]::TryParse([string]$Values['PLATFORM_ADMIN_SUBJECT'], [ref]$identifier) -or
-                $identifier -eq [guid]::Empty) {
-            $errors.Add('PLATFORM_ADMIN_SUBJECT: value must be a non-zero UUID')
+    foreach ($name in @('PLATFORM_ADMIN_USERNAME', 'PLATFORM_ADMIN_DISPLAY_NAME',
+            'PLATFORM_ADMIN_SUBJECT', 'PLATFORM_ADMIN_PASSWORD')) {
+        if ([string]::IsNullOrWhiteSpace([string]$Values[$name])) {
+            $errors.Add("$($name): required for the built-in platform administrator")
         }
     }
-
-    if ([string]$Values['IDENTITY_PROVIDER_MODE'] -eq 'external') {
-        foreach ($name in @('OIDC_ISSUER_URI', 'VITE_OIDC_AUTHORIZATION_ENDPOINT',
-                'VITE_OIDC_TOKEN_ENDPOINT', 'VITE_OIDC_CLIENT_ID', 'VITE_OIDC_REDIRECT_URI')) {
-            if ([string]::IsNullOrWhiteSpace([string]$Values[$name])) {
-                $errors.Add("$($name): required when IDENTITY_PROVIDER_MODE=external")
-            }
-        }
+    if ([string]$Values['PLATFORM_ADMIN_USERNAME'] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$') {
+        $errors.Add('PLATFORM_ADMIN_USERNAME: use 3 to 64 letters, digits, dots, underscores or hyphens')
+    }
+    $adminPassword = [string]$Values['PLATFORM_ADMIN_PASSWORD']
+    if ($adminPassword.Length -lt 12 -or $adminPassword -cnotmatch '[A-Z]' -or
+            $adminPassword -cnotmatch '[a-z]' -or $adminPassword -notmatch '[0-9]' -or
+            $adminPassword -notmatch '[^A-Za-z0-9]') {
+        $errors.Add('PLATFORM_ADMIN_PASSWORD: use at least 12 characters with upper/lower case, number and symbol')
+    }
+    $identifier = [guid]::Empty
+    if (-not [guid]::TryParse([string]$Values['PLATFORM_ADMIN_SUBJECT'], [ref]$identifier) -or
+            $identifier -eq [guid]::Empty) {
+        $errors.Add('PLATFORM_ADMIN_SUBJECT: value must be a non-zero UUID')
     }
 
     if (Get-ConfigurationBoolean -Values $Values -Name 'WECHAT_IDENTITY_ENABLED') {

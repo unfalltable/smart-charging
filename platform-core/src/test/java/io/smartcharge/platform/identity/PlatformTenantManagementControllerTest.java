@@ -55,8 +55,7 @@ class PlatformTenantManagementControllerTest {
                 .thenAnswer(invocation -> invocation.<RowMapper<?>>getArgument(1).mapRow(counts, 0));
 
         PlatformTenantManagementController controller = new PlatformTenantManagementController(
-                jdbc, tenantJdbc, mock(TenantProvisioningController.class), mock(IdentityAdminGateway.class),
-                new PlatformAuthority(), mock(AuditService.class));
+                jdbc, tenantJdbc, new PlatformAuthority(), mock(AuditService.class));
 
         var rows = controller.list(platformAdministrator());
 

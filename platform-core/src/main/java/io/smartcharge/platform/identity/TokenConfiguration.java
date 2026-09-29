@@ -1,6 +1,5 @@
 package io.smartcharge.platform.identity;
 
-import com.nimbusds.jwt.JWTParser;
 import java.util.Base64;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -9,9 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtDecoders;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
-import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
@@ -58,26 +55,6 @@ class TokenConfiguration {
                         "invalid_token", "Required audience is missing", null));
         application.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(properties.appIssuer()), audience));
-        if ("database".equalsIgnoreCase(properties.identityProviderMode())) {
-            return application;
-        }
-        if (properties.oidcIssuerUri() == null || properties.oidcIssuerUri().isBlank()) {
-            throw new IllegalStateException("OIDC_ISSUER_URI is required when external identity is enabled");
-        }
-        NimbusJwtDecoder oidc = properties.oidcJwkSetUri() == null || properties.oidcJwkSetUri().isBlank()
-                ? (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(properties.oidcIssuerUri())
-                : NimbusJwtDecoder.withJwkSetUri(properties.oidcJwkSetUri()).build();
-        oidc.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
-                JwtValidators.createDefaultWithIssuer(properties.oidcIssuerUri()), audience));
-        return token -> {
-            try {
-                String issuer = JWTParser.parse(token).getJWTClaimsSet().getIssuer();
-                return properties.appIssuer().equals(issuer) ? application.decode(token) : oidc.decode(token);
-            } catch (JwtException expected) {
-                throw expected;
-            } catch (Exception malformed) {
-                throw new JwtException("Malformed JWT", malformed);
-            }
-        };
+        return application;
     }
 }

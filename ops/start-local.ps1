@@ -116,10 +116,8 @@ try {
     Write-Host "Admin console: http://127.0.0.1:$adminPort/"
     Write-Host "API through local proxy: http://127.0.0.1:$adminPort/api/v1"
     Write-Host "Core API (diagnostics): http://127.0.0.1:$corePort"
-    if ([string]$configuration['IDENTITY_PROVIDER_MODE'] -eq 'database') {
-        Write-Host 'Initial login: run .\config-manager.cmd credentials' -ForegroundColor Yellow
-        Write-Host 'Log in as the platform super-administrator, change the one-time password, then create downstream tenants in Platform and Tenants.' -ForegroundColor Yellow
-    }
+    Write-Host 'Initial login: run .\config-manager.cmd credentials' -ForegroundColor Yellow
+    Write-Host 'Log in as the single platform super-administrator, change the one-time password, then create tenants and assign their accounts.' -ForegroundColor Yellow
     if ($deviceGatewayEnabled) {
         Write-Host 'Device gateway: enabled with the supplied TLS certificates.'
     }

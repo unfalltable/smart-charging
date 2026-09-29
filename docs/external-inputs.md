@@ -44,8 +44,7 @@
 
 ## 企业后台与合规
 
-- OIDC 身份平台的授权端点、令牌端点、Issuer、前端 Client ID，以及管理员 MFA 策略。
-- 首个管理员的 OIDC `sub`，用于初始化 `TENANT_ADMIN` 成员；系统会阻止停用最后一个管理员。
+- 唯一平台超级管理员的生产用户名、显示名称和受控初始密码交付方式。
 - 用户协议、隐私政策、退款规则、客服电话、发票主体、数据保留期限及等保/隐私评审结论。
 
 ## 生产基础设施（本阶段暂不代配机器）
@@ -56,13 +55,4 @@
 
 支付宝属于第二渠道阶段，需要支付宝小程序 AppID、应用私钥/平台公钥、商户能力与模板消息资质；微信首发不需要先提供。
 
-自托管身份模式由显式 `platform_admin` 在“平台与租户”开通首个租户和管理员；外部 OIDC 的自动化部署也可由具有 `SCOPE_internal` 的服务身份开通。两种方式都不提供匿名初始化后门：
-
-```powershell
-$env:INTERNAL_PROVISIONING_TOKEN = Read-Host 'OIDC provisioning token'
-.\ops\provision-tenant.ps1 -TenantCode $tenantCode -TenantDisplayName $tenantName `
-  -AdminSubject $oidcSubject -AdminDisplayName $adminName
-Remove-Item Env:INTERNAL_PROVISIONING_TOKEN
-```
-
-开通接口需要真实参数，在一个事务中写入租户、首个管理员成员和审计日志。自托管模式还会创建身份账号、首登改密和 MFA 要求；完成后日常成员与角色变更全部走后台权限管理和审计日志。
+平台超级管理员在“平台与租户”开通真实租户，再在“账号与权限”创建后台账号并分配岗位。系统不提供匿名初始化后门；账号创建、停用、重置密码和角色变更全部记录审计日志。

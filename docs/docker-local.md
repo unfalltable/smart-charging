@@ -31,21 +31,9 @@ notepad.exe .env
 .\config-manager.cmd credentials
 ```
 
-打开管理后台，使用临时密码登录并立即设置新密码。平台超级管理员不属于任何下游租户，可进入“平台与租户”创建真实运营商和首位租户管理员。租户管理员随后在“账号与权限”创建员工并分配运营、财务、审计或客服岗位。
+打开管理后台，使用临时密码登录并立即设置新密码。平台超级管理员不属于任何下游租户：先在“平台与租户”创建真实运营商，再到“账号与权限”创建账号并分配租户管理员、运营、财务、审计或客服岗位。
 
-管理后台故意不开放匿名注册：消费者注册属于微信/支付宝小程序链路，运营后台账号必须由上级管理员分配，防止访客自行取得业务权限。新建或重置账号时，随机临时密码只显示一次，需通过独立安全渠道交付。
-
-如需脚本化开通，可在平台管理员完成首次改密后运行：
-
-```powershell
-$platformPassword = Read-Host '平台管理员当前密码' -AsSecureString
-.\ops\provision-tenant.ps1 -TenantCode east-region -TenantDisplayName '华东运营商' `
-  -AdminUsername east-admin -AdminEmail admin@example.com -AdminDisplayName '华东管理员' `
-  -PlatformPassword $platformPassword
-Remove-Variable platformPassword
-```
-
-也可省略 `-PlatformPassword`，脚本会安全提示输入且不回显。日常使用建议直接在管理后台开通。
+管理后台故意不开放匿名注册：消费者注册属于微信/支付宝小程序链路，运营后台账号只能由平台超级管理员分配，防止访客或下游账号自行扩大权限。新建或重置账号时，随机临时密码只显示一次，需通过独立安全渠道交付。
 
 ## 数据与升级
 
@@ -55,7 +43,7 @@ Remove-Variable platformPassword
 .\docker-stop.cmd -DeleteData
 ```
 
-该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷，无法恢复，但会保留你维护的 `.env`。旧版 `.env.docker` 会在首次运行新脚本时自动重命名为 `.env`，已有账号和秘密不会丢失。旧版 `IDENTITY_PROVIDER_MODE=bundled` 配置会自动迁移为 `database`；业务数据卷不会因此自动删除。
+该操作会删除本 Compose 项目的 PostgreSQL、Valkey 和 NATS 数据卷，无法恢复，但会保留你维护的 `.env`。旧版 `.env.docker` 会在首次运行新脚本时自动重命名为 `.env`，已有账号和秘密不会丢失；旧的 OIDC/身份模式字段会自动从 `.env` 清理。
 
 ## 真实设备、微信和支付
 

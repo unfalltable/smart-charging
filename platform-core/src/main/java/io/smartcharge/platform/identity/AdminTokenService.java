@@ -146,17 +146,16 @@ final class AdminTokenService {
         }
         List<TenantRole> tenantRoles = jdbc.query("""
                 select a.tenant_id, a.role_code
-                  from user_tenant_authority a
+                 from user_tenant_authority a
                   join tenant t on t.id=a.tenant_id and t.status='ACTIVE'
                  where a.user_id=? and a.status='ACTIVE'
-                   and (a.accepted_at is not null or a.invite_expires_at is null or a.invite_expires_at > now())
                  order by a.tenant_id, a.role_code
                 """, (result, row) -> new TenantRole(
                 result.getObject("tenant_id", UUID.class), result.getString("role_code")), account.id());
         List<UUID> tenantIds = new ArrayList<>();
         for (TenantRole role : tenantRoles) {
             if (!tenantIds.contains(role.tenantId())) tenantIds.add(role.tenantId());
-            scopes.add(IdentityAdminGateway.realmRole(role.roleCode()));
+            scopes.add(scopeForRole(role.roleCode()));
         }
         if (scopes.isEmpty()) throw new AuthenticationFailureException("账号没有可用的平台或租户权限");
         return new Authority(Set.copyOf(scopes), List.copyOf(tenantIds));
@@ -169,6 +168,17 @@ final class AdminTokenService {
         } catch (Exception unavailable) {
             throw new IllegalStateException("SHA-256 is unavailable", unavailable);
         }
+    }
+
+    private static String scopeForRole(String roleCode) {
+        return switch (roleCode) {
+            case "TENANT_ADMIN" -> "admin";
+            case "OPERATOR" -> "operator";
+            case "FINANCE" -> "finance";
+            case "AUDITOR" -> "auditor";
+            case "SUPPORT" -> "support";
+            default -> throw new AuthenticationFailureException("账号包含不支持的岗位角色");
+        };
     }
 
     record Account(UUID id, String subject, String username, String displayName,

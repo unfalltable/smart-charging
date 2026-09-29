@@ -83,9 +83,6 @@ try {
             Write-Host "Generated mini-program deployment configuration: $miniappPath" -ForegroundColor Green
         }
         'credentials' {
-            if ([string]$values['IDENTITY_PROVIDER_MODE'] -ne 'database') {
-                throw 'The credentials command is available only when IDENTITY_PROVIDER_MODE=database.'
-            }
             Write-Host 'Sensitive credentials are shown because the credentials command was explicitly requested.' -ForegroundColor Yellow
             Write-Host "Platform login URL: http://127.0.0.1:$([string]$values['ADMIN_WEB_PORT'])/"
             Write-Host "Platform username: $([string]$values['PLATFORM_ADMIN_USERNAME'])"

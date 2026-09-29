@@ -17,40 +17,30 @@
 - `status`：按分类显示配置状态，秘密只显示末四位。
 - `validate`：检查基础配置和所有已启用能力；任何错误都会以非零状态退出。
 - `export-miniapp`：从统一配置生成 Git 忽略的小程序部署文件。
-- `credentials`：仅在明确执行时显示数据库身份模式的初始平台登录；首次登录后必须改密，原始配置密码不会覆盖已修改的数据库密码。
+- `credentials`：仅在明确执行时显示唯一平台超级管理员的初始登录；首次登录后必须改密，原始配置密码不会覆盖已修改的数据库密码。
 
 `docker-start.cmd` 启动前会自动执行同一套校验，不会用假地址、默认账号、模拟支付或测试租户绕过缺失配置。
 
-## 身份模式
+## 后台账号
 
-默认 `IDENTITY_PROVIDER_MODE=database`，管理端使用常规用户名和密码：
+管理端固定使用常规用户名和密码，不依赖 Keycloak 或外部 OIDC：
 
 - `PLATFORM_ADMIN_SUBJECT`、`PLATFORM_ADMIN_USERNAME`、`PLATFORM_ADMIN_PASSWORD` 由 `init` 随机生成；
 - 平台超级管理员明确保存在 `platform_user`，不属于任何下游租户；
 - 首次登录只允许修改临时密码，改密后才签发完整管理权限；
 - 密码使用自描述的 bcrypt 散列，连续失败会锁定，访问令牌短期有效，刷新令牌轮换并检测复用；
 - 退出、改密、停用或管理员重置密码后，现有管理会话立即失效；
-- 平台超级管理员创建租户和首位租户管理员，租户管理员再创建员工账号；管理后台不开放匿名注册。
-
-需要企业统一身份时可在 `.env` 中切换到 `IDENTITY_PROVIDER_MODE=external`。此时必须提供：
-
-- `OIDC_ISSUER_URI`：身份平台签发者地址，服务端用它发现公钥并校验令牌；
-- `VITE_OIDC_AUTHORIZATION_ENDPOINT`：浏览器授权地址；
-- `VITE_OIDC_TOKEN_ENDPOINT`：Authorization Code + PKCE 换取令牌的地址；
-- `VITE_OIDC_CLIENT_ID`：管理端 public client 标识，不是 secret；
-- `VITE_OIDC_REDIRECT_URI`、`VITE_OIDC_SCOPES`：登录回调和申请范围。
-
-外部模式下账号创建、密码恢复和 MFA 由外部身份平台负责，本系统只保存其真实 subject 与租户岗位关系。
+- 只有平台超级管理员可以创建、停用、重置后台账号并分配租户岗位；普通管理员不能继续创建账号；
+- 管理后台不开放匿名注册，新账号使用一次性临时密码并在首次登录时强制改密。
 
 ## 配置分类
 
 | 分类 | 配置项 | 来源或用途 |
 |---|---|---|
 | 核心秘密 | `POSTGRES_PASSWORD`、`VALKEY_PASSWORD`、`QR_SIGNING_SECRET`、`DEVICE_CREDENTIAL_MASTER_KEY_BASE64`、`AUTH_JWT_SECRET_BASE64` | `init` 自动生成；不得提交、共享或写入日志 |
-| 身份模式 | `IDENTITY_PROVIDER_MODE`、`APP_JWT_ISSUER`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS` | 内置账号或外部 OIDC、平台令牌签发和跨域白名单 |
+| 后台身份 | `APP_JWT_ISSUER`、`API_JWT_AUDIENCE`、`ALLOWED_ORIGINS` | 平台令牌签发、校验和跨域白名单 |
 | 平台管理员 | `PLATFORM_ADMIN_SUBJECT`、`PLATFORM_ADMIN_USERNAME`、`PLATFORM_ADMIN_PASSWORD`、`PLATFORM_ADMIN_DISPLAY_NAME`、`PLATFORM_ADMIN_EMAIL` | 初始化数据库中的唯一平台超级管理员；初始密码只用于首次登录 |
-| 外部 OIDC | `OIDC_*`、`VITE_OIDC_*` | 仅在 `external` 模式必填 |
-| 账号生命周期 | `IDENTITY_INVITATION_LIFESPAN_HOURS`、`IDENTITY_LOGIN_EVENT_RETENTION_DAYS`、`IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS` | 临时账号有效期、管理员登录事件与过期刷新令牌留存期；到期数据由服务端每日自动清理 |
+| 账号安全留存 | `IDENTITY_LOGIN_EVENT_RETENTION_DAYS`、`IDENTITY_EXPIRED_TOKEN_RETENTION_DAYS` | 管理员登录事件与过期刷新令牌留存期；到期数据由服务端每日自动清理 |
 | 微信身份 | `WECHAT_IDENTITY_ENABLED`、`WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_TENANT_CODE`、`MINIAPP_DEVTOOLS_CLI_PATH` | 有真实小程序资质后启用；CLI 路径仅在未安装到默认目录时填写 |
 | 微信通知 | `WECHAT_NOTIFICATION_ENABLED`、`WECHAT_NOTIFICATION_TEMPLATES_JSON` | 通知类型到微信订阅消息模板的映射 |
 | 微信支付 | `WECHAT_PAYMENT_ENABLED`、`WECHAT_PAYMENT_DIRECTORY`、`WECHAT_PRIMARY_*`、`PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS` | 真实商户 APIv3 密钥、只读证书目录，以及支付机构实际批准的分账比例上限（100 基点 = 1%） |
@@ -67,4 +57,4 @@
 
 单机 `.env` 只适合本机验收或受控小规模部署。正式环境仍应限制文件权限，并优先使用云秘密管理、Docker Secret 或编排平台 Secret 注入；PostgreSQL、Valkey 与 NATS 应按容量做高可用、备份恢复和监控。公开域名、小程序 API、支付回调和设备入口必须使用可信 HTTPS/TLS，只有本机回环开发地址允许 HTTP。
 
-内置数据库账号可以继续用于生产，但生产发布必须启用 HTTPS、妥善保护 JWT 与数据库秘密、审计管理员操作并完成账号锁定/恢复演练。组织已有统一身份、需要强制 MFA 或集中离职回收时，再切换外部 OIDC，无需改变业务数据模型。
+内置数据库账号可以用于生产，但生产发布必须启用 HTTPS、妥善保护 JWT 与数据库秘密、审计管理员操作并完成账号锁定/恢复演练。

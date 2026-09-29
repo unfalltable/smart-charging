@@ -5,11 +5,7 @@ import io.smartcharge.platform.shared.web.DistributedRateLimitFilter;
 import io.smartcharge.platform.shared.web.RateLimitProperties;
 import io.smartcharge.platform.shared.web.RequestContextFilter;
 import java.util.Arrays;
-import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,11 +20,9 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -62,14 +56,12 @@ class SecurityConfiguration {
                                 "/api/v1/auth/miniapp/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/admin/login",
                                 "/api/v1/auth/admin/refresh").permitAll()
-                        .requestMatchers("/internal/**").hasAuthority("SCOPE_internal")
                         .requestMatchers("/api/v1/platform/**")
                             .hasAuthority("SCOPE_platform_admin")
                         .requestMatchers(HttpMethod.GET, "/api/v1/admin/organizations/**")
                             .hasAnyAuthority("SCOPE_admin", "SCOPE_operator", "SCOPE_finance")
                         .requestMatchers("/api/v1/admin/organizations/**").hasAuthority("SCOPE_admin")
                         .requestMatchers("/api/v1/admin/organizations").hasAuthority("SCOPE_admin")
-                        .requestMatchers("/api/v1/admin/access/**").hasAuthority("SCOPE_admin")
                         .requestMatchers("/api/v1/admin/legal/**").hasAuthority("SCOPE_admin")
                         .requestMatchers("/api/v1/admin/operations/audit").hasAnyAuthority("SCOPE_admin", "SCOPE_auditor")
                         .requestMatchers("/api/v1/admin/operations/work-orders",
@@ -93,25 +85,9 @@ class SecurityConfiguration {
     }
 
     @Bean
-    Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter(
-            @Value("${charging.security.provisioning-client-id:}") String provisioningClientId) {
+    Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter() {
         JwtGrantedAuthoritiesConverter standardScopes = new JwtGrantedAuthoritiesConverter();
-        return jwt -> {
-            Set<GrantedAuthority> authorities = new LinkedHashSet<>(standardScopes.convert(jwt));
-            Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
-            Object roles = realmAccess == null ? null : realmAccess.get("roles");
-            if (roles instanceof Collection<?> values) {
-                values.stream().map(String::valueOf)
-                        .filter(role -> role.matches("[A-Za-z0-9_-]{1,64}"))
-                        .map(role -> new SimpleGrantedAuthority("SCOPE_" + role))
-                        .forEach(authorities::add);
-            }
-            String authorizedParty = jwt.getClaimAsString("azp");
-            if (!provisioningClientId.isBlank() && provisioningClientId.equals(authorizedParty)) {
-                authorities.add(new SimpleGrantedAuthority("SCOPE_internal"));
-            }
-            return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
-        };
+        return jwt -> new JwtAuthenticationToken(jwt, standardScopes.convert(jwt), jwt.getSubject());
     }
 
     @Bean

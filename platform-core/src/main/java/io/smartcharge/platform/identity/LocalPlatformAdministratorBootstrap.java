@@ -5,14 +5,12 @@ import java.util.Locale;
 import java.util.UUID;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
-@ConditionalOnProperty(prefix = "charging.security", name = "identity-provider-mode", havingValue = "database")
 final class LocalPlatformAdministratorBootstrap implements ApplicationRunner {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;

@@ -39,7 +39,7 @@ class AdminAccountStatusFilterTest {
         AtomicBoolean invoked = new AtomicBoolean();
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new AdminAccountStatusFilter(jdbc, "database").doFilter(
+        new AdminAccountStatusFilter(jdbc).doFilter(
                 new MockHttpServletRequest("GET", "/api/v1/platform/tenants"), response,
                 (request, chainResponse) -> invoked.set(true));
 
@@ -55,7 +55,7 @@ class AdminAccountStatusFilterTest {
         SecurityContextHolder.getContext().setAuthentication(adminToken(userId, 7));
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new AdminAccountStatusFilter(jdbc, "database").doFilter(
+        new AdminAccountStatusFilter(jdbc).doFilter(
                 new MockHttpServletRequest("GET", "/api/v1/platform/tenants"), response,
                 (request, chainResponse) -> { });
 
@@ -71,7 +71,7 @@ class AdminAccountStatusFilterTest {
         SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(jwt));
         AtomicBoolean invoked = new AtomicBoolean();
 
-        new AdminAccountStatusFilter(jdbc, "database").doFilter(
+        new AdminAccountStatusFilter(jdbc).doFilter(
                 new MockHttpServletRequest("GET", "/api/v1/customer/orders"),
                 new MockHttpServletResponse(), (request, response) -> invoked.set(true));
 

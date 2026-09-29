@@ -2,18 +2,15 @@ package io.smartcharge.platform.identity;
 
 import io.smartcharge.platform.audit.AuditService;
 import io.smartcharge.platform.shared.domain.DomainException;
-import io.smartcharge.platform.shared.domain.ServiceUnavailableException;
 import io.smartcharge.platform.tenancy.PlatformAuthority;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.time.ZoneId;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -35,19 +32,13 @@ final class PlatformTenantManagementController {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private final JdbcTemplate jdbc;
     private final TenantJdbcExecutor tenantJdbc;
-    private final TenantProvisioningController provisioning;
-    private final IdentityAdminGateway identity;
     private final PlatformAuthority platformAuthority;
     private final AuditService audit;
 
     PlatformTenantManagementController(JdbcTemplate jdbc, TenantJdbcExecutor tenantJdbc,
-                                       TenantProvisioningController provisioning,
-                                       IdentityAdminGateway identity,
                                        PlatformAuthority platformAuthority, AuditService audit) {
         this.jdbc = jdbc;
         this.tenantJdbc = tenantJdbc;
-        this.provisioning = provisioning;
-        this.identity = identity;
         this.platformAuthority = platformAuthority;
         this.audit = audit;
     }
@@ -78,8 +69,7 @@ final class PlatformTenantManagementController {
                 select
                     (select count(distinct user_id) from tenant_membership, context
                       where tenant_membership.tenant_id=context.tenant_id and status='ACTIVE'
-                        and (accepted_at is not null or invite_expires_at is null or invite_expires_at > now()))
-                        as active_members,
+                    ) as active_members,
                     (select count(*) from station, context
                       where station.tenant_id=context.tenant_id and status <> 'CLOSED') as stations,
                     (select count(*) from device, context
@@ -123,69 +113,19 @@ final class PlatformTenantManagementController {
     PlatformTenantCreated create(@Valid @RequestBody CreatePlatformTenantRequest request,
                                  Authentication authentication) {
         platformAuthority.requirePlatformAdministrator(authentication);
-        if (!identity.capabilities().managedLifecycle()) {
-            throw new ServiceUnavailableException(
-                    "Tenant administrator creation must be completed in the external identity provider");
-        }
         Boolean existingTenant = jdbc.queryForObject(
                 "select exists(select 1 from tenant where code=?)", Boolean.class, request.code());
         if (Boolean.TRUE.equals(existingTenant)) {
             throw new DomainException("The tenant code is already in use");
         }
-        UUID requestedTenantId = UUID.randomUUID();
-        IdentityAdminGateway.ProvisionedIdentity account = identity.provision(
-                new IdentityAdminGateway.ProvisionIdentity(request.adminUsername(), request.adminEmail(),
-                        request.adminDisplayName(), requestedTenantId, "TENANT_ADMIN",
-                        identity.capabilities().mfaSupported()));
-        TenantProvisioningController.ProvisionedTenant tenant;
-        try {
-            tenant = provisioning.create(new TenantProvisioningController.ProvisionTenantRequest(
-                    requestedTenantId, request.code(), request.displayName(), account.subject(),
-                    request.adminDisplayName())).getBody();
-            if (tenant == null) throw new IllegalStateException("Tenant provisioning returned no result");
-            UUID tenantId = tenant.tenantId();
-            Instant expiresAt = Instant.now().plus(identity.capabilities().invitationLifespanHours(), ChronoUnit.HOURS);
-            tenantJdbc.readWriteAs(tenantId, () -> {
-                jdbc.update("""
-                        update platform_user
-                           set username=?, email=?, display_name=?, identity_managed=true,
-                               mfa_required=?, status='ACTIVE', updated_at=now(), version=version+1
-                         where subject=?
-                        """, account.username(), account.email(), request.adminDisplayName(),
-                        identity.capabilities().mfaSupported(), account.subject());
-                jdbc.update("""
-                        update tenant_membership
-                           set invited_at=now(), invite_expires_at=?, accepted_at=null, invited_by=?,
-                               updated_at=now(), version=version+1
-                         where id=? and tenant_id=?
-                        """, expiresAt, authentication.getName(), tenant.adminMembershipId(), tenantId);
-                audit.record("TENANT_ADMIN_INVITED", "tenant_membership", tenant.adminMembershipId(), null,
-                        Map.of("username", account.username(), "email", account.email(),
-                                "expiresAt", expiresAt.toString()));
-                return null;
-            });
-        } catch (RuntimeException failure) {
-            identity.deleteIfCreated(account);
-            throw failure;
-        }
-        String delivery = "TEMPORARY_PASSWORD";
-        String temporaryPassword = account.temporaryPassword();
-        if (!account.created() && account.temporaryPassword() == null) {
-            delivery = "EXISTING_ACCOUNT";
-            temporaryPassword = null;
-        } else if (identity.capabilities().emailDelivery()) {
-            try {
-                identity.sendInvitation(account.subject());
-                delivery = "EMAIL";
-                temporaryPassword = null;
-            } catch (ServiceUnavailableException emailFailure) {
-                temporaryPassword = identity.resetTemporaryPassword(account.subject(),
-                        identity.capabilities().mfaSupported(), false);
-                delivery = "TEMPORARY_PASSWORD_FALLBACK";
-            }
-        }
-        return new PlatformTenantCreated(tenant.tenantId(), tenant.code(), tenant.displayName(),
-                account.username(), account.email(), delivery, temporaryPassword);
+        UUID tenantId = UUID.randomUUID();
+        return tenantJdbc.readWriteAs(tenantId, () -> {
+            jdbc.update("insert into tenant (id, code, display_name, status) values (?, ?, ?, 'ACTIVE')",
+                    tenantId, request.code(), request.displayName().strip());
+            audit.record("TENANT_CREATED", "tenant", tenantId, null,
+                    Map.of("code", request.code(), "displayName", request.displayName().strip()));
+            return new PlatformTenantCreated(tenantId, request.code(), request.displayName().strip());
+        });
     }
 
     @PatchMapping("/{tenantId}/status")
@@ -211,13 +151,9 @@ final class PlatformTenantManagementController {
 
     record CreatePlatformTenantRequest(
             @NotBlank @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,62}") String code,
-            @NotBlank @Size(max = 160) String displayName,
-            @NotBlank @Pattern(regexp = "[a-zA-Z0-9][a-zA-Z0-9._-]{2,63}") String adminUsername,
-            @NotBlank @Email @Size(max = 254) String adminEmail,
-            @NotBlank @Size(max = 120) String adminDisplayName) { }
+            @NotBlank @Size(max = 160) String displayName) { }
     record TenantStatusRequest(@NotNull String status) { }
-    record PlatformTenantCreated(UUID id, String code, String displayName, String adminUsername,
-                                 String adminEmail, String delivery, String temporaryPassword) { }
+    record PlatformTenantCreated(UUID id, String code, String displayName) { }
     record PlatformTenantView(UUID id, String code, String displayName, String status,
                               long activeMembers, long stations, long devices, long onlineDevices,
                               long successfulPaymentsToday, long todayNetRevenueMinor,

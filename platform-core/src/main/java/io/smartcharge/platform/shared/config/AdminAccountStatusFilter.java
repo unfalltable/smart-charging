@@ -6,7 +6,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -17,19 +16,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public final class AdminAccountStatusFilter extends OncePerRequestFilter {
     private final JdbcTemplate jdbc;
-    private final boolean databaseIdentity;
 
-    public AdminAccountStatusFilter(JdbcTemplate jdbc,
-                                    @Value("${charging.security.identity-provider-mode:external}") String mode) {
+    public AdminAccountStatusFilter(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
-        this.databaseIdentity = "database".equalsIgnoreCase(mode);
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (!databaseIdentity || !(authentication instanceof JwtAuthenticationToken jwt)) {
+        if (!(authentication instanceof JwtAuthenticationToken jwt)) {
             chain.doFilter(request, response);
             return;
         }
