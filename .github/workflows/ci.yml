@@ -49,7 +49,7 @@ jobs:
       - name: Audit resolved backend dependencies
         shell: pwsh
         run: ./ops/tests/dependency-audit.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: backend-sbom
           path: target/bom.json
@@ -69,7 +69,7 @@ jobs:
       - run: npm run build:web
       - run: npm run check:weapp
       - run: npm sbom --sbom-format cyclonedx > frontend.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: frontend-sbom
           path: frontend.cdx.json
