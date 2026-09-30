@@ -1,4 +1,5 @@
 <view class="page">
+  <view wx:if="{{loggedIn && errorMessage && orders.length}}" class="card inline-error" role="alert"><text>{{errorMessage}}</text><button class="secondary" bindtap="loadOrders">重新加载</button></view>
   <view wx:if="{{!loggedIn}}" class="card empty-state">
     <text class="state-title">登录后查看订单</text>
     <text class="state-message">微信登录会自动创建消费者账号，不需要单独注册。</text>
@@ -16,8 +17,10 @@
     <view class="head"><text>{{item.stationName}}</text><text class="status">{{item.statusText}}</text></view>
     <text class="meta">{{item.connectorNo}} 号位 · {{item.orderNo}}</text>
     <view class="numbers"><text>{{item.energyKwh}} kWh</text><text class="amount">¥ {{item.amountYuan}}</text></view>
-    <text wx:if="{{item.paidAmountMinor > 0}}" class="paid">已支付 ¥ {{item.paidYuan}}</text>
+    <text wx:if="{{item.paidAmountMinor > 0}}" class="paid">净支付 ¥ {{item.paidYuan}}</text>
+    <text wx:if="{{item.refundedAmountMinor > 0}}" class="paid">已退款 ¥ {{item.refundedYuan}}</text>
+    <text wx:if="{{item.confirmingPayment}}" class="paid" aria-live="polite">支付结果确认中，请勿重复支付；可下拉刷新</text>
     <button wx:if="{{item.canStop}}" class="stop" data-order-id="{{item.orderId}}" disabled="{{actionOrderId}}" loading="{{actionOrderId === item.orderId}}" hover-class="button-pressed" bindtap="stopOrder">停止充电</button>
-    <button wx:if="{{item.canPay}}" class="primary pay" data-order-id="{{item.orderId}}" disabled="{{actionOrderId}}" loading="{{actionOrderId === item.orderId}}" hover-class="button-pressed" bindtap="payOrder">立即支付</button>
+    <button wx:if="{{item.canPay}}" class="primary pay" data-order-id="{{item.orderId}}" disabled="{{actionOrderId}}" loading="{{actionOrderId === item.orderId}}" hover-class="button-pressed" bindtap="payOrder">支付待结金额 ¥ {{item.outstandingYuan}}</button>
   </view>
 </view>

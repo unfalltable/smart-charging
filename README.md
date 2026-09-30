@@ -51,7 +51,7 @@ notepad.exe .env
 
 ## 小程序
 
-微信小程序采用微信快捷登录：用户第一次登录时自动创建消费者账号，不要求另设用户名密码；后续由微信身份识别，并提供安全退出和消费者账号注销。已实现真实扫码、协议确认、启停充电、订单、微信支付、钱包支付记录、发票和客服工单流程，不包含演示数据或模拟支付。
+微信小程序采用微信快捷登录：用户第一次登录时自动创建消费者账号，不要求另设用户名密码；后续由微信身份识别，并提供安全退出和消费者账号注销。已实现真实扫码、协议确认、启停充电、订单、微信支付、钱包余额与支付记录查询、发票和客服工单流程，不包含演示数据或模拟支付。
 
 编辑 `.env` 中的微信和小程序三环境字段后，执行 `.\config-manager.cmd export-miniapp`，即可生成 Git 忽略的 `deployment.config.js` 与 `project.private.config.json`。所选环境缺少以 `/api/v1` 结尾的真实 HTTPS API 地址、AppID 或正确租户编码时，小程序会拒绝启动或上传。导入与发布步骤见 [微信小程序发布说明](docs/miniapp-release.md)。配置完成并在微信开发者工具登录后，可一键上传代码：
 
@@ -66,13 +66,33 @@ notepad.exe .env
 ```powershell
 $env:JAVA_HOME=(Resolve-Path '.tools\jdk-21.0.12.1+1').Path
 .\.tools\apache-maven-3.9.16\bin\mvn.cmd -B -ntp clean verify
+npm run test --workspaces --if-present
 npm run build:web
 npm run check:weapp
 .\ops\tests\local-scripts.test.ps1
+.\ops\tests\backup-safety.test.ps1
 ```
 
 资质、生产凭据、真实设备和基础设施验收清单见
 [外部输入](docs/external-inputs.md) 与 [生产商用门禁](docs/production-readiness.md)。在真实支付、真实桩机、备份恢复、安全和容量验收完成前，不能宣称已经可以公开收费运营。
+
+发布验收必须设置 `REQUIRE_DATABASE_TESTS=true`。数据库测试使用 Docker 隔离库，或显式配置一次性的
+`TEST_DATABASE_URL`、`TEST_DATABASE_USER`、`TEST_DATABASE_PASSWORD`；会迁移并写入测试夹具，**不得指向生产库**。
+普通开发环境缺少 Docker 和隔离库时可能跳过数据库测试，不能把这种结果当作完整验收。CI 另执行实际 Docker 启动、账号授权和备份恢复烟测。
+
+CI 根据解析后的后端 SBOM 查询 OSV 已知漏洞，命中任何公告或查询失败均阻止该验收通过；
+前端另执行 `npm audit`。本地可先生成 `target/bom.json`，再运行 `ops/tests/dependency-audit.ps1`。
+依赖扫描只代表当时已知公告的覆盖，不能替代渗透测试、镜像扫描和真实业务验收。
+
+## 当前交付边界
+
+本版以微信两轮车首发为主。仍未实现支付宝端、钱包线上充值/余额支付/提现、自动税务开票、支付机构账单自动下载。
+钱包目前是查询与有审计的人工余额更正；发票是申请与外部真实开票凭证录入；日对账须导入完整销售账单。
+这些是软件能力边界，不是补几个配置就能自动开启。
+
+当前充电采用结束后支付，并阻止欠费用户再次启动；它不是押金预付或免密自动扣款，不能消除首次坏账。
+实际设备须支持本项目 SC1 协议或增加厂商协议适配，不能把未联调的设备当成已兼容。官方分账不会使收入免税，
+也不是按各层级收款码分别扫码付款；直接收款与分账都必须由支付机构认可的商户能力承载。
 
 ## 模块
 

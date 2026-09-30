@@ -33,7 +33,7 @@ final class OutboxCommandPublisher {
 
     @Scheduled(fixedDelayString = "${outbox.publisher-delay-ms:250}")
     void publishAvailable() {
-        List<UUID> tenants = jdbc.query("select id from tenant where status = 'ACTIVE' order by id",
+        List<UUID> tenants = jdbc.query("select id from tenant order by id",
                 (result, row) -> result.getObject(1, UUID.class));
         for (UUID tenantId : tenants) {
             for (PendingCommand pending : claim(tenantId)) publish(pending);
@@ -42,7 +42,7 @@ final class OutboxCommandPublisher {
 
     @Scheduled(fixedDelayString = "${device-commands.retry-delay-ms:5000}")
     void retryUnacknowledged() {
-        List<UUID> tenants = jdbc.query("select id from tenant where status = 'ACTIVE' order by id",
+        List<UUID> tenants = jdbc.query("select id from tenant order by id",
                 (result, row) -> result.getObject(1, UUID.class));
         for (UUID tenantId : tenants) {
             for (DeviceCommand command : claimRetries(tenantId)) publishRetry(command);
@@ -58,6 +58,8 @@ final class OutboxCommandPublisher {
                       join device d on d.id = dc.device_id and d.tenant_id = dc.tenant_id
                       left join connector c on c.id = dc.connector_id and c.tenant_id = dc.tenant_id
                      where dc.tenant_id = ? and dc.status = 'PUBLISHED' and dc.expires_at > now()
+                       and (dc.command_type='STOP_CHARGING' or exists(
+                            select 1 from tenant t where t.id=dc.tenant_id and t.status='ACTIVE'))
                        and dc.published_at <= now() - interval '5 seconds'
                      order by dc.published_at
                      for update of dc skip locked
@@ -98,6 +100,9 @@ final class OutboxCommandPublisher {
                       left join connector c on c.id = dc.connector_id and c.tenant_id = e.tenant_id
                      where e.tenant_id = ? and e.published_at is null and e.available_at <= now()
                        and e.event_type = 'DeviceCommandRequested' and dc.expires_at > now()
+                       and dc.status in ('PENDING','PUBLISHED')
+                       and (dc.command_type='STOP_CHARGING' or exists(
+                            select 1 from tenant t where t.id=dc.tenant_id and t.status='ACTIVE'))
                      order by e.occurred_at
                      for update of e skip locked
                      limit 50

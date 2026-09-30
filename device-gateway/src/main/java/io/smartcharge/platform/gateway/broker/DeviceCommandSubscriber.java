@@ -44,7 +44,7 @@ final class DeviceCommandSubscriber implements SmartLifecycle {
                 log.warn("Rejected device command message: reason={}", failure.getClass().getSimpleName());
             }
         });
-        dispatcher.subscribe("charging.command.*");
+        dispatcher.subscribe("charging.command.>");
         running = true;
     }
 

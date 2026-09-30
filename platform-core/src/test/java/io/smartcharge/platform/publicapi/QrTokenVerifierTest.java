@@ -28,6 +28,16 @@ class QrTokenVerifierTest {
     }
 
     @Test
+    void issuedPhysicalLabelCanBeVerifiedAndCannotBeReassigned() {
+        UUID tenant = UUID.randomUUID();
+        UUID connector = UUID.randomUUID();
+        String token = verifier.issue(tenant, connector);
+        assertEquals(new QrTokenVerifier.VerifiedQr(tenant, connector), verifier.verify(token));
+        assertThrows(IllegalArgumentException.class,
+                () -> verifier.verify(token.replace(connector.toString(), UUID.randomUUID().toString())));
+    }
+
+    @Test
     void rejectsTamperedToken() throws Exception {
         String payload = "sc1." + UUID.randomUUID() + "." + UUID.randomUUID();
         String token = payload + "." + signature(payload);

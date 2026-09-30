@@ -9,6 +9,7 @@ import io.smartcharge.platform.billing.TariffCalculator;
 import io.smartcharge.platform.billing.TariffCalculator.Mode;
 import io.smartcharge.platform.billing.TariffCalculator.PriceRule;
 import io.smartcharge.platform.shared.persistence.JdbcTimes;
+import io.smartcharge.platform.shared.domain.DomainException;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
@@ -62,7 +63,7 @@ final class DeviceEventConsumer {
                         new String(message.getData(), StandardCharsets.UTF_8), DeviceEnvelope.class);
                 process(envelope);
                 message.ack();
-            } catch (IllegalArgumentException unrecoverable) {
+            } catch (IllegalArgumentException | DomainException unrecoverable) {
                 log.warn("Discarding invalid device event: reason={}", unrecoverable.getClass().getSimpleName());
                 message.term();
             } catch (Exception retryable) {
@@ -75,12 +76,18 @@ final class DeviceEventConsumer {
     }
 
     void process(DeviceEnvelope envelope) throws Exception {
-        DeviceRoute route = jdbc.query("select tenant_id, device_id from device_route where device_code = ?",
+        DeviceRoute route = jdbc.query("""
+                select tenant_id, device_id from device_route where device_code=?
+                """,
                 (result, row) -> new DeviceRoute(result.getObject("tenant_id", UUID.class),
                         result.getObject("device_id", UUID.class)), envelope.deviceCode()).stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown device route"));
         JsonNode payload = json.readTree(envelope.payload());
         tenantJdbc.readWriteAs(route.tenantId(), () -> {
+            boolean activeDevice = !jdbc.query("""
+                    select id from device where tenant_id=? and id=? and status<>'RETIRED' for update
+                    """, (row, index) -> row.getObject(1, UUID.class), route.tenantId(), route.deviceId()).isEmpty();
+            if (!activeDevice) throw new IllegalArgumentException("Device is retired or unavailable");
             int inserted = jdbc.update("""
                     insert into device_message
                         (id, tenant_id, device_id, message_id, nonce, event_type, occurred_at, payload)
@@ -90,7 +97,11 @@ final class DeviceEventConsumer {
                     envelope.nonce(), envelope.eventType().name(), JdbcTimes.timestamp(envelope.occurredAt()),
                     envelope.payload());
             if (inserted == 0) return null;
-            jdbc.update("update device set status = 'ONLINE', last_seen_at = now(), updated_at = now() where tenant_id = ? and id = ?",
+            jdbc.update("""
+                    update device set status=case when status='FAULTED' then status else 'ONLINE' end,
+                           last_seen_at=now(), updated_at=now(), version=version+1
+                     where tenant_id=? and id=? and status<>'RETIRED'
+                    """,
                     route.tenantId(), route.deviceId());
             switch (envelope.eventType()) {
                 case BOOT, HEARTBEAT -> { }
@@ -110,11 +121,14 @@ final class DeviceEventConsumer {
         String status = requiredText(payload, "status");
         if (!CONNECTOR_STATES.contains(status)) throw new IllegalArgumentException("Invalid connector status");
         jdbc.update("""
-                update connector set status = ?, last_status_at = ?, updated_at = now(), version = version + 1
-                 where tenant_id = ? and device_id = ? and connector_no = ?
+                update connector c set status = ?, last_status_at = ?, updated_at = now(), version = version + 1
+                 where c.tenant_id = ? and c.device_id = ? and c.connector_no = ? and c.status<>'DISABLED'
                    and (last_status_at is null or last_status_at <= ?)
+                   and (cast(? as varchar)<>'AVAILABLE' or not exists (
+                         select 1 from charging_order o where o.tenant_id=c.tenant_id and o.connector_id=c.id
+                          and o.status in ('START_PENDING','CHARGING','STOP_PENDING')))
                 """, status, JdbcTimes.timestamp(occurredAt), route.tenantId(), route.deviceId(), connectorNo,
-                JdbcTimes.timestamp(occurredAt));
+                JdbcTimes.timestamp(occurredAt), status);
     }
 
     private void acknowledgeCommand(DeviceRoute route, JsonNode payload) {
@@ -135,6 +149,10 @@ final class DeviceEventConsumer {
         String currentStatus = orderStatus(route.tenantId(), route.deviceId(), orderId);
         if ("CHARGING".equals(currentStatus) || "STOP_PENDING".equals(currentStatus)
                 || "COMPLETED".equals(currentStatus)) return;
+        if ("FAILED".equals(currentStatus) || "CANCELLED".equals(currentStatus)) {
+            containUnexpectedStart(route, orderId, occurredAt, meterStartWh);
+            return;
+        }
         int changed = jdbc.update("""
                 update charging_order set status = 'CHARGING', started_at = ?, updated_at = now(), version = version + 1
                  where tenant_id = ? and id = ? and status = 'START_PENDING'
@@ -147,10 +165,51 @@ final class DeviceEventConsumer {
                  where tenant_id = ? and order_id = ?
                 """, meterStartWh, JdbcTimes.timestamp(occurredAt), route.tenantId(), orderId);
         jdbc.update("""
-                update connector c set status = 'CHARGING', last_status_at = ?, updated_at = now(), version = version + 1
+                update connector c set status = 'CHARGING', last_status_at = ?, updated_at = now(), version = c.version + 1
                   from charging_order o
                  where o.tenant_id = ? and o.id = ? and c.tenant_id = o.tenant_id and c.id = o.connector_id
                 """, JdbcTimes.timestamp(occurredAt), route.tenantId(), orderId);
+    }
+
+    private void containUnexpectedStart(DeviceRoute route, UUID orderId, Instant occurredAt, long meterStartWh) {
+        UUID connector = jdbc.queryForObject("select connector_id from charging_order where tenant_id=? and id=?",
+                UUID.class, route.tenantId(), orderId);
+        jdbc.update("""
+                update charging_session set started_at=?, meter_start_wh=?, updated_at=now(), version=version+1
+                 where tenant_id=? and order_id=? and started_at is null
+                """, JdbcTimes.timestamp(occurredAt), meterStartWh, route.tenantId(), orderId);
+        // A timed-out/cancelled start may already have reached the device. Stop that exact
+        // session without reopening a bill or making the physical connector available.
+        UUID command = UUID.nameUUIDFromBytes((orderId + ":safety-stop").getBytes(StandardCharsets.UTF_8));
+        String payload = "{\"orderId\":\"" + orderId + "\",\"connectorId\":\"" + connector
+                + "\",\"reason\":\"UNEXPECTED_START\"}";
+        int inserted = jdbc.update("""
+                insert into device_command(id,tenant_id,device_id,connector_id,order_id,command_type,status,payload,expires_at)
+                values (?,?,?,?,?,'STOP_CHARGING','PENDING',cast(? as jsonb),now()+interval '2 minutes')
+                on conflict (id) do nothing
+                """, command, route.tenantId(), route.deviceId(), connector, orderId, payload);
+        if (inserted == 1) {
+            jdbc.update("""
+                    insert into outbox_event(id,tenant_id,aggregate_type,aggregate_id,event_type,payload,occurred_at)
+                    values (?,?,'DeviceCommand',?,'DeviceCommandRequested',cast(? as jsonb),now())
+                    """, UUID.randomUUID(), route.tenantId(), command,
+                    "{\"commandId\":\"" + command + "\",\"deviceId\":\"" + route.deviceId() + "\"}");
+        }
+        jdbc.update("""
+                insert into device_alarm(id,tenant_id,device_id,connector_id,external_alarm_id,alarm_code,severity,message,status,occurred_at)
+                values (?,?,?,?,?,'UNEXPECTED_SESSION_START','CRITICAL',
+                        'Device started a cancelled or timed-out order; safety stop requested. Verify the physical relay.','OPEN',?)
+                on conflict (tenant_id,device_id,external_alarm_id) do nothing
+                """, UUID.randomUUID(), route.tenantId(), route.deviceId(), connector,
+                "unexpected-start:" + orderId, JdbcTimes.timestamp(occurredAt));
+        jdbc.update("update device set status='FAULTED',updated_at=now(),version=version+1 where tenant_id=? and id=?",
+                route.tenantId(), route.deviceId());
+        jdbc.update("""
+                update connector c set status='OFFLINE',updated_at=now(),version=version+1
+                 where tenant_id=? and id=? and status<>'DISABLED'
+                   and not exists(select 1 from charging_order o where o.tenant_id=c.tenant_id and o.connector_id=c.id
+                                  and o.status in ('START_PENDING','CHARGING','STOP_PENDING'))
+                """, route.tenantId(), connector);
     }
 
     private void recordMeter(DeviceRoute route, Instant occurredAt, JsonNode payload) {
@@ -176,12 +235,40 @@ final class DeviceEventConsumer {
                 requiredLong(payload, "sequenceNo"), requiredLong(payload, "energyWh"),
                 optionalInt(payload, "powerW"), optionalInt(payload, "voltageMv"),
                 optionalInt(payload, "currentMa"), payload.toString());
+        if (sessionId != null) {
+            jdbc.update("""
+                    update charging_session set energy_wh=greatest(energy_wh, ?-meter_start_wh),
+                           updated_at=now(), version=version+1
+                     where tenant_id=? and id=? and started_at is not null and stopped_at is null
+                       and ?>=meter_start_wh
+                    """, requiredLong(payload, "energyWh"), route.tenantId(), sessionId,
+                    requiredLong(payload, "energyWh"));
+        }
     }
 
     private void stopSession(DeviceRoute route, Instant occurredAt, JsonNode payload) {
         UUID orderId = requiredUuid(payload, "orderId");
         long meterStopWh = requiredLong(payload, "meterStopWh");
-        if ("COMPLETED".equals(orderStatus(route.tenantId(), route.deviceId(), orderId))) return;
+        String status = orderStatus(route.tenantId(), route.deviceId(), orderId);
+        if ("COMPLETED".equals(status)) return;
+        if ("FAILED".equals(status) || "CANCELLED".equals(status)) {
+            jdbc.update("""
+                    update charging_session set stopped_at=?,meter_stop_wh=?,energy_wh=greatest(0,?-meter_start_wh),
+                           stop_reason='UNEXPECTED_START_SAFETY_STOP',updated_at=now(),version=version+1
+                     where tenant_id=? and order_id=? and started_at is not null and stopped_at is null
+                    """, JdbcTimes.timestamp(occurredAt), meterStopWh, meterStopWh, route.tenantId(), orderId);
+            jdbc.update("""
+                    update connector c set status='AVAILABLE',last_status_at=?,updated_at=now(),version=c.version+1
+                      from charging_order o where o.tenant_id=? and o.id=? and c.tenant_id=o.tenant_id and c.id=o.connector_id
+                       and c.status not in ('DISABLED','FAULTED') and (c.last_status_at is null or c.last_status_at<=?)
+                       and not exists(select 1 from charging_order active where active.tenant_id=c.tenant_id
+                           and active.connector_id=c.id and active.status in ('START_PENDING','CHARGING','STOP_PENDING'))
+                    """, JdbcTimes.timestamp(occurredAt), route.tenantId(), orderId, JdbcTimes.timestamp(occurredAt));
+            return;
+        }
+        if ("START_PENDING".equals(status)) {
+            throw new IllegalStateException("Session start event must be processed before session stop");
+        }
         SessionBilling billing = jdbc.query("""
                 select cs.meter_start_wh, cs.started_at, o.connector_id, o.status as order_status, t.billing_mode,
                        coalesce((t.price_rules ->> 'durationUnitPriceMinor')::bigint,
@@ -224,7 +311,9 @@ final class DeviceEventConsumer {
         jdbc.update("""
                 update connector set status = 'AVAILABLE', last_status_at = ?, updated_at = now(), version = version + 1
                  where tenant_id = ? and id = ?
-                """, JdbcTimes.timestamp(occurredAt), route.tenantId(), billing.connectorId());
+                   and status not in ('DISABLED','FAULTED')
+                   and (last_status_at is null or last_status_at<=?)
+                """, JdbcTimes.timestamp(occurredAt), route.tenantId(), billing.connectorId(), JdbcTimes.timestamp(occurredAt));
     }
 
     private void recordAlarm(DeviceRoute route, DeviceEnvelope envelope, JsonNode payload) {
@@ -274,11 +363,11 @@ final class DeviceEventConsumer {
         return value;
     }
     private static int requiredInt(JsonNode payload, String field) {
-        if (!payload.has(field) || !payload.path(field).isIntegralNumber()) throw new IllegalArgumentException(field + " is required");
+        if (!payload.has(field) || !payload.path(field).isIntegralNumber() || !payload.path(field).canConvertToInt()) throw new IllegalArgumentException(field + " is required");
         return payload.path(field).asInt();
     }
     private static long requiredLong(JsonNode payload, String field) {
-        if (!payload.has(field) || !payload.path(field).isIntegralNumber()) throw new IllegalArgumentException(field + " is required");
+        if (!payload.has(field) || !payload.path(field).isIntegralNumber() || !payload.path(field).canConvertToLong()) throw new IllegalArgumentException(field + " is required");
         long value = payload.path(field).asLong();
         if (value < 0) throw new IllegalArgumentException(field + " cannot be negative");
         return value;

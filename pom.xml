@@ -30,12 +30,31 @@
         <jnats.version>2.26.0</jnats.version>
         <tomcat.version>11.0.26</tomcat.version>
         <bouncycastle.version>2.73.12</bouncycastle.version>
+        <jackson.version>3.1.7</jackson.version>
+        <okio.version>3.4.0</okio.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <wechatpay-java.version>0.2.17</wechatpay-java.version>
     </properties>
     <dependencyManagement>
         <dependencies>
             <!-- Security overrides are kept ahead of imported BOMs so Maven selects the patched versions. -->
+            <dependency>
+                <groupId>tools.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okio</groupId>
+                <artifactId>okio</artifactId>
+                <version>${okio.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okio</groupId>
+                <artifactId>okio-jvm</artifactId>
+                <version>${okio.version}</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.tomcat.embed</groupId>
                 <artifactId>tomcat-embed-core</artifactId>

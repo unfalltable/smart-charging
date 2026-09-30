@@ -255,7 +255,7 @@ final class AssetManagementController {
 
     record CreateDeviceRequest(
             @NotNull UUID stationId,
-            @NotBlank @Pattern(regexp = "[A-Za-z0-9._:-]{2,96}") String deviceCode,
+            @NotBlank @Pattern(regexp = "[A-Za-z0-9._-]{2,96}") String deviceCode,
             @NotBlank @Size(max = 64) String protocolCode,
             @NotBlank @Size(max = 96) String productModel,
             @Size(max = 64) String firmwareVersion,

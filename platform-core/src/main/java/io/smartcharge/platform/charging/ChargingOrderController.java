@@ -42,6 +42,6 @@ final class ChargingOrderController {
     @PostMapping("/{orderId}/stop")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ChargingOrderService.StopResult stop(@PathVariable UUID orderId) {
-        return orders.requestStop(currentCustomer.requireId(), orderId);
+        return orders.requestStop(currentCustomer.requireIdForStop(), orderId);
     }
 }

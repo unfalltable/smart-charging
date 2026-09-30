@@ -11,6 +11,6 @@
     <button hover-class="menu-pressed" bindtap="openAgreements"><text>服务协议与隐私政策</text><text class="chevron">›</text></button>
     <button hover-class="menu-pressed" bindtap="openSupport"><text>客服与故障上报</text><text class="chevron">›</text></button>
   </view>
-  <button wx:if="{{loggedIn}}" class="logout" hover-class="button-pressed" bindtap="logout">退出登录</button>
-  <button wx:if="{{loggedIn}}" class="close-account" hover-class="button-pressed" bindtap="closeAccount">注销消费者账号</button>
+  <button wx:if="{{loggedIn}}" class="logout" disabled="{{accountBusy}}" hover-class="button-pressed" bindtap="logout">退出登录</button>
+  <button wx:if="{{loggedIn}}" class="close-account" disabled="{{accountBusy}}" hover-class="button-pressed" bindtap="closeAccount">注销消费者账号</button>
 </view>

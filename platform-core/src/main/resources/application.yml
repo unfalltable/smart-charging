@@ -11,6 +11,9 @@ spring:
       connection-timeout: 3000
   flyway:
     enabled: true
+    url: ${DATABASE_MIGRATION_URL:${DATABASE_URL}}
+    user: ${DATABASE_MIGRATION_USER:${DATABASE_USER}}
+    password: ${DATABASE_MIGRATION_PASSWORD:${DATABASE_PASSWORD}}
     validate-migration-naming: true
   task:
     scheduling:
@@ -40,6 +43,7 @@ info:
 charging:
   qr-signing-secret: ${QR_SIGNING_SECRET}
   payment:
+    intent-expire-minutes: ${PAYMENT_INTENT_EXPIRE_MINUTES:30}
     profit-sharing:
       maximum-basis-points: ${PAYMENT_PROFIT_SHARING_MAX_BASIS_POINTS:3000}
   security:
@@ -77,8 +81,11 @@ charging:
     master-key-base64: ${DEVICE_CREDENTIAL_MASTER_KEY_BASE64:}
 nats:
   url: ${NATS_URL}
+  token: ${NATS_TOKEN:}
 outbox:
   publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:250}
+payments:
+  wechat-enabled: ${WECHAT_PAYMENT_ENABLED:false}
 management:
   info:
     env:

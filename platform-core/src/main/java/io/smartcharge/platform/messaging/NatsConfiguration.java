@@ -16,12 +16,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 class NatsConfiguration {
     @Bean(destroyMethod = "close")
-    Connection natsConnection(@Value("${nats.url}") String url) throws Exception {
-        return Nats.connect(new Options.Builder()
+    Connection natsConnection(@Value("${nats.url}") String url, @Value("${nats.token:}") String token) throws Exception {
+        Options.Builder options = new Options.Builder()
                 .server(url)
                 .connectionTimeout(Duration.ofSeconds(3))
-                .maxReconnects(-1)
-                .build());
+                .maxReconnects(-1);
+        if (!token.isBlank()) options.token(token.toCharArray());
+        return Nats.connect(options.build());
     }
 
     @Bean

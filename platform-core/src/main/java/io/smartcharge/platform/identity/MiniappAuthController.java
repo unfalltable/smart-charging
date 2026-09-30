@@ -41,6 +41,8 @@ final class MiniappAuthController {
                 .orElseThrow(() -> new DomainException("Mini-program identity provider is not configured"));
         MiniappIdentityProvider.ExternalIdentity identity = provider.exchange(request.code());
         return tenantJdbc.readWriteAs(tenantId, () -> {
+            jdbc.queryForObject("select pg_advisory_xact_lock(hashtextextended(?, 0))", Object.class,
+                    tenantId + ":" + request.provider() + ":" + identity.providerSubject());
             ExistingCustomer existing = jdbc.query("""
                     select ci.customer_id, c.status from customer_identity ci
                       join customer c on c.tenant_id=ci.tenant_id and c.id=ci.customer_id
@@ -75,7 +77,16 @@ final class MiniappAuthController {
 
     @PostMapping("/refresh")
     TokenService.Session refresh(@Valid @RequestBody RefreshRequest request) {
-        return tenantJdbc.readWriteAs(request.tenantId(), () -> tokens.rotate(request.tenantId(), request.refreshToken()));
+        RefreshOutcome outcome = tenantJdbc.readWriteAs(request.tenantId(), () -> {
+            try {
+                return new RefreshOutcome(tokens.rotate(request.tenantId(), request.refreshToken()), null);
+            } catch (AuthenticationFailureException failure) {
+                // Commit token-family revocation before returning the authentication failure.
+                return new RefreshOutcome(null, failure);
+            }
+        });
+        if (outcome.failure() != null) throw outcome.failure();
+        return outcome.session();
     }
 
     @PostMapping("/logout")
@@ -91,4 +102,5 @@ final class MiniappAuthController {
                         @NotBlank @Pattern(regexp = "[a-z0-9][a-z0-9-]{1,62}") String tenantCode) { }
     record RefreshRequest(@NotNull UUID tenantId, @NotBlank @jakarta.validation.constraints.Size(min = 40, max = 100) String refreshToken) { }
     record ExistingCustomer(UUID customerId, String status) { }
+    private record RefreshOutcome(TokenService.Session session, AuthenticationFailureException failure) { }
 }

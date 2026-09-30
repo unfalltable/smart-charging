@@ -33,4 +33,24 @@ class TariffCalculatorTest {
         assertThrows(DomainException.class, () -> calculator.calculate(
                 new PriceRule(Mode.ENERGY, 0, 1, 0), start, start.plusSeconds(1), 1000, 999));
     }
+
+    @Test
+    void preservesFractionalSecondsAtTheMinuteBoundary() {
+        var rule = new PriceRule(Mode.DURATION, 2, 0, 0);
+        assertEquals(1, calculator.calculate(rule, start, start.plusSeconds(60), 0, 0).durationMinutes());
+        assertEquals(2, calculator.calculate(rule, start, start.plusSeconds(60).plusNanos(1), 0, 0).durationMinutes());
+        assertEquals(4, calculator.calculate(rule, start, start.plusSeconds(61).minusNanos(1_000), 0, 0).amountMinor());
+    }
+
+    @Test
+    void rejectsDurationAmountOverflowInsteadOfProducingANegativeCharge() {
+        assertThrows(DomainException.class, () -> calculator.calculate(
+                new PriceRule(Mode.DURATION, Long.MAX_VALUE, 0, 0), start, start.plusSeconds(61), 0, 0));
+    }
+
+    @Test
+    void doesNotCalculateAnUnusedPriceComponent() {
+        assertEquals(5, calculator.calculate(new PriceRule(Mode.ENERGY, Long.MAX_VALUE, 1, 0),
+                start, start.plusSeconds(61), 0, 5).amountMinor());
+    }
 }

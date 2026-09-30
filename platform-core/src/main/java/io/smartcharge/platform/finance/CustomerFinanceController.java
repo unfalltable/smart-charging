@@ -79,6 +79,7 @@ final class CustomerFinanceController {
             PaidOrder order = jdbc.query("""
                     select payable_amount_minor, paid_amount_minor from charging_order
                      where tenant_id=? and customer_id=? and id=? and status='COMPLETED'
+                     for update
                     """, (result, row) -> new PaidOrder(
                     result.getLong("payable_amount_minor"), result.getLong("paid_amount_minor")),
                     tenantId, customerId, request.orderId()).stream().findFirst()
@@ -86,18 +87,52 @@ final class CustomerFinanceController {
             if (order.paidAmountMinor() < order.payableAmountMinor() || order.payableAmountMinor() <= 0) {
                 throw new DomainException("Only a fully paid order can be invoiced");
             }
+            boolean refundPending = Boolean.TRUE.equals(jdbc.queryForObject("""
+                    select exists(select 1 from refund_transaction r
+                                   join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
+                                  where p.tenant_id=? and p.order_id=? and r.status in ('CREATED','PROCESSING'))
+                    """, Boolean.class, tenantId, request.orderId()));
+            if (refundPending) throw new DomainException("An order with a pending refund cannot be invoiced");
             UUID id = UUID.randomUUID();
             int inserted = jdbc.update("""
                     insert into invoice_request
                         (id, tenant_id, customer_id, order_id, title, tax_number, email, amount_minor, status)
                     values (?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED')
-                    on conflict (tenant_id, order_id) do nothing
+                    on conflict (tenant_id, order_id) do update
+                        set title=excluded.title, tax_number=excluded.tax_number, email=excluded.email,
+                            amount_minor=excluded.amount_minor, status='SUBMITTED', updated_at=now()
+                      where invoice_request.status='REJECTED'
                     """, id, tenantId, customerId, request.orderId(), request.title(), request.taxNumber(),
                     request.email(), order.payableAmountMinor());
             if (inserted != 1) throw new DomainException("An invoice has already been requested for this order");
-            return new InvoiceView(id, request.orderId(), request.title(), request.taxNumber(), request.email(),
-                    order.payableAmountMinor(), "SUBMITTED", null, Instant.now());
+            return jdbc.query("""
+                    select id, order_id, title, tax_number, email, amount_minor, status, invoice_url, created_at
+                      from invoice_request where tenant_id=? and order_id=?
+                    """, (result, row) -> new InvoiceView(
+                    result.getObject("id", UUID.class), result.getObject("order_id", UUID.class),
+                    result.getString("title"), result.getString("tax_number"), result.getString("email"),
+                    result.getLong("amount_minor"), result.getString("status"), result.getString("invoice_url"),
+                    result.getTimestamp("created_at").toInstant()), tenantId, request.orderId()).getFirst();
         });
+    }
+
+    @GetMapping("/refunds")
+    List<CustomerRefundView> refunds() {
+        UUID tenantId = TenantContext.requireTenantId();
+        UUID customerId = currentCustomer.requireId();
+        return tenantJdbc.readWrite(() -> jdbc.query("""
+                select r.id, p.order_id, o.order_no, r.payment_id, r.merchant_refund_no,
+                       r.amount_minor, r.status, r.reason, r.created_at, r.completed_at
+                  from refund_transaction r
+                  join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
+                  join charging_order o on o.tenant_id=p.tenant_id and o.id=p.order_id
+                 where r.tenant_id=? and o.customer_id=? order by r.created_at desc limit 100
+                """, (result, row) -> new CustomerRefundView(result.getObject("id", UUID.class),
+                result.getObject("order_id", UUID.class), result.getString("order_no"),
+                result.getObject("payment_id", UUID.class), result.getString("merchant_refund_no"),
+                result.getLong("amount_minor"), result.getString("status"), result.getString("reason"),
+                result.getTimestamp("created_at").toInstant(), timestamp(result.getTimestamp("completed_at"))),
+                tenantId, customerId));
     }
 
     @GetMapping("/invoices")
@@ -122,6 +157,8 @@ final class CustomerFinanceController {
     record WalletView(UUID id, String currency, long balanceMinor, long frozenMinor, String status, long version) { }
     record CustomerPaymentView(UUID id, UUID orderId, String orderNo, String channel, long amountMinor,
                                String currency, String status, Instant createdAt, Instant completedAt) { }
+    record CustomerRefundView(UUID id, UUID orderId, String orderNo, UUID paymentId, String merchantRefundNo,
+                              long amountMinor, String status, String reason, Instant createdAt, Instant completedAt) { }
     record InvoiceView(UUID id, UUID orderId, String title, String taxNumber, String email,
                        long amountMinor, String status, String invoiceUrl, Instant createdAt) { }
 }

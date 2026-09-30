@@ -38,8 +38,10 @@ function pay(payment) {
 
 function subscribeNotifications(templateIds) {
   if (!Array.isArray(templateIds) || templateIds.length === 0) return Promise.resolve({})
+  const selected = [...new Set(templateIds.filter(Boolean))].slice(0, 3)
+  if (selected.length === 0) return Promise.resolve({})
   return new Promise((resolve) => wx.requestSubscribeMessage({
-    tmplIds: templateIds,
+    tmplIds: selected,
     success: resolve,
     fail: () => resolve({})
   }))

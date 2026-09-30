@@ -136,11 +136,17 @@ final class PlatformTenantManagementController {
         if (!List.of("ACTIVE", "SUSPENDED", "CLOSED").contains(request.status())) {
             throw new IllegalArgumentException("Unsupported tenant status");
         }
-        int changed = jdbc.update("""
-                update tenant set status=?, updated_at=now(), version=version+1 where id=?
-                """, request.status(), tenantId);
-        if (changed != 1) throw new IllegalArgumentException("Tenant does not exist");
         tenantJdbc.readWriteAs(tenantId, () -> {
+            boolean exists = !jdbc.query("select id from tenant where id=? for update",
+                    (row, index) -> row.getObject(1, UUID.class), tenantId).isEmpty();
+            if (!exists) throw new IllegalArgumentException("Tenant does not exist");
+            if (!"ACTIVE".equals(request.status()) && Boolean.TRUE.equals(jdbc.queryForObject("""
+                    select exists(select 1 from charging_order where tenant_id=?
+                                   and status in ('START_PENDING','CHARGING','STOP_PENDING'))
+                    """, Boolean.class, tenantId))) {
+                throw new DomainException("请先停止并确认所有进行中的充电订单，再暂停或关闭运营商");
+            }
+            jdbc.update("update tenant set status=?,updated_at=now(),version=version+1 where id=?", request.status(), tenantId);
             audit.record("TENANT_" + request.status(), "tenant", tenantId, null,
                     Map.of("status", request.status()));
             return null;

@@ -10,7 +10,6 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -19,6 +18,8 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.net.URI;
 import java.util.List;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -30,6 +31,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -140,26 +142,31 @@ final class FinanceAdminController {
 
     @PostMapping("/wallet-adjustments")
     @ResponseStatus(HttpStatus.CREATED)
-    Map<String, Object> adjustWallet(@Valid @RequestBody WalletAdjustmentRequest request) {
+    Map<String, Object> adjustWallet(@RequestHeader("Idempotency-Key") String idempotencyKey,
+                                     @Valid @RequestBody WalletAdjustmentRequest request) {
         if (!Set.of("CREDIT", "DEBIT").contains(request.direction())) {
             throw new IllegalArgumentException("Invalid wallet adjustment direction");
         }
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
+            FinanceIdempotency.Request operation = FinanceIdempotency.begin(
+                    jdbc, tenantId, "WALLET_ADJUSTMENT", idempotencyKey, request);
+            if (operation.response() != null) return operation.response();
             jdbc.update("""
                     insert into wallet_account (id, tenant_id, customer_id, currency, status)
                     values (?, ?, ?, 'CNY', 'ACTIVE') on conflict (tenant_id, customer_id, currency) do nothing
                     """, UUID.randomUUID(), tenantId, request.customerId());
             WalletBalance wallet = jdbc.query("""
-                    select id, balance_minor from wallet_account
+                    select id, balance_minor, frozen_minor from wallet_account
                      where tenant_id=? and customer_id=? and currency='CNY' and status='ACTIVE' for update
                     """, (result, row) -> new WalletBalance(
-                    result.getObject("id", UUID.class), result.getLong("balance_minor")), tenantId, request.customerId())
+                    result.getObject("id", UUID.class), result.getLong("balance_minor"),
+                    result.getLong("frozen_minor")), tenantId, request.customerId())
                     .stream().findFirst().orElseThrow(() -> new DomainException("Customer wallet is unavailable"));
             long next = "CREDIT".equals(request.direction())
                     ? Math.addExact(wallet.balanceMinor(), request.amountMinor())
                     : wallet.balanceMinor() - request.amountMinor();
-            if (next < 0) throw new DomainException("Wallet balance is insufficient");
+            if (next < wallet.frozenMinor()) throw new DomainException("Available wallet balance is insufficient");
             jdbc.update("""
                     update wallet_account set balance_minor=?, updated_at=now(), version=version+1
                      where tenant_id=? and id=?
@@ -174,7 +181,9 @@ final class FinanceAdminController {
             audit.record("WALLET_ADJUSTED", "wallet_account", wallet.id(),
                     Map.of("balanceMinor", wallet.balanceMinor()),
                     Map.of("balanceMinor", next, "reason", request.reason(), "referenceId", referenceId));
-            return Map.of("walletId", wallet.id(), "balanceMinor", next, "referenceId", referenceId);
+            Map<String, Object> response = Map.of("walletId", wallet.id(), "balanceMinor", next, "referenceId", referenceId);
+            FinanceIdempotency.save(jdbc, tenantId, operation, response, 201);
+            return response;
         });
     }
 
@@ -216,9 +225,13 @@ final class FinanceAdminController {
 
     @PostMapping("/refunds")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    RefundView createRefund(@Valid @RequestBody CreateRefundRequest request) {
+    RefundView createRefund(@RequestHeader("Idempotency-Key") String idempotencyKey,
+                            @Valid @RequestBody CreateRefundRequest request) {
         UUID tenantId = TenantContext.requireTenantId();
-        RefundSeed seed = tenantJdbc.readWrite(() -> prepareRefund(tenantId, request));
+        RefundSeed seed = tenantJdbc.readWrite(() -> prepareRefund(tenantId, idempotencyKey, request));
+        if (Set.of("SUCCEEDED", "FAILED", "CLOSED").contains(seed.status())) {
+            return tenantJdbc.readWrite(() -> refundView(tenantId, seed.id()));
+        }
         try {
             PaymentGateway.GatewayRefund gatewayRefund = gateways.required(seed.channel()).createRefund(
                     new PaymentGateway.GatewayRefundRequest(tenantId, seed.merchantChannelId(),
@@ -227,25 +240,34 @@ final class FinanceAdminController {
                             seed.currency(), seed.reason()));
             tenantJdbc.readWrite(() -> {
                 jdbc.update("""
-                        update refund_transaction set provider_refund_no=?, status='PROCESSING', updated_at=now()
-                         where tenant_id=? and id=? and status='CREATED'
+                        update refund_transaction set provider_refund_no=coalesce(?, provider_refund_no), status='PROCESSING', updated_at=now()
+                         where tenant_id=? and id=? and status in ('CREATED','PROCESSING')
                         """, gatewayRefund.providerRefundNo(), tenantId, seed.id());
                 return null;
             });
             if (gatewayRefund.completed()) {
                 refunds.applyProviderStatus(tenantId, seed.id(), new PaymentGateway.GatewayRefundStatus(
-                        gatewayRefund.providerRefundNo(), seed.amountMinor(), PaymentGateway.ProviderState.SUCCEEDED));
+                        gatewayRefund.providerRefundNo(), seed.amountMinor(), PaymentGateway.ProviderState.SUCCEEDED,
+                        gatewayRefund.completedAt()));
             }
             return tenantJdbc.readWrite(() -> refundView(tenantId, seed.id()));
         } catch (RuntimeException failure) {
             tenantJdbc.readWrite(() -> {
                 jdbc.update("""
                         update refund_transaction set status='PROCESSING', updated_at=now()
-                         where tenant_id=? and id=? and status='CREATED'
+                         where tenant_id=? and id=? and status in ('CREATED','PROCESSING')
                         """,
                         tenantId, seed.id());
+                if (failure instanceof ProviderRequestRejectedException rejected) {
+                    audit.record("REFUND_PROVIDER_REJECTED", "refund_transaction", seed.id(), null,
+                            Map.of("providerCode", rejected.code(), "merchantRefundNo", seed.merchantRefundNo()));
+                }
                 return null;
             });
+            if (failure instanceof ProviderRequestRejectedException rejected) {
+                throw new DomainException("Refund provider rejected request: " + rejected.code()
+                        + "; correct the merchant issue and retry the original refund number");
+            }
             throw failure;
         }
     }
@@ -254,8 +276,24 @@ final class FinanceAdminController {
     @ResponseStatus(HttpStatus.CREATED)
     ReconciliationResult reconcile(@Valid @RequestBody ReconciliationRequest request) {
         if (!CHANNELS.contains(request.channel())) throw new IllegalArgumentException("Unsupported channel");
+        Set<String> providerOrders = new HashSet<>();
+        Set<String> providerTransactions = new HashSet<>();
+        for (ReconciliationRow row : request.rows()) {
+            if (!providerOrders.add(row.merchantOrderNo()) || !providerTransactions.add(row.providerTransactionNo())) {
+                throw new IllegalArgumentException("The provider statement contains duplicate transactions");
+            }
+        }
         UUID tenantId = TenantContext.requireTenantId();
         return tenantJdbc.readWrite(() -> {
+            jdbc.queryForObject("select pg_advisory_xact_lock(hashtextextended(?, 0))", Object.class,
+                    tenantId + ":RECONCILIATION:" + request.channel() + ":" + request.statementDate() + ":" + request.sourceFileHash());
+            List<ReconciliationResult> previous = jdbc.query("""
+                    select id, status, total_count, matched_count, exception_count from reconciliation_batch
+                     where tenant_id=? and channel=? and statement_date=? and source_file_hash=?
+                    """, (result, row) -> new ReconciliationResult(result.getObject("id", UUID.class),
+                    result.getString("status"), result.getInt("total_count"), result.getInt("matched_count"),
+                    result.getInt("exception_count")), tenantId, request.channel(), request.statementDate(), request.sourceFileHash());
+            if (!previous.isEmpty()) return previous.getFirst();
             UUID batchId = UUID.randomUUID();
             jdbc.update("""
                     insert into reconciliation_batch
@@ -265,14 +303,20 @@ final class FinanceAdminController {
                     request.sourceFileHash(), request.rows().size());
             int matched = 0;
             int exceptions = 0;
+            Instant start = request.statementDate().atStartOfDay(BUSINESS_ZONE).toInstant();
+            Instant end = request.statementDate().plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
+            Map<String, PaymentMatch> platformPayments = new LinkedHashMap<>();
+            jdbc.query("""
+                    select id, merchant_order_no, amount_minor, provider_transaction_no from payment_transaction
+                     where tenant_id=? and channel=? and status='SUCCEEDED'
+                       and transaction_type in ('PAY','CAPTURE') and completed_at>=? and completed_at<?
+                    """, (result, row) -> new PaymentMatch(result.getObject("id", UUID.class),
+                    result.getString("merchant_order_no"), result.getLong("amount_minor"),
+                    result.getString("provider_transaction_no")), tenantId, request.channel(),
+                    JdbcTimes.timestamp(start), JdbcTimes.timestamp(end))
+                    .forEach(payment -> platformPayments.put(payment.merchantOrderNo(), payment));
             for (ReconciliationRow row : request.rows()) {
-                PaymentMatch payment = jdbc.query("""
-                        select id, amount_minor, provider_transaction_no from payment_transaction
-                         where tenant_id=? and channel=? and merchant_order_no=? and status='SUCCEEDED'
-                        """, (result, index) -> new PaymentMatch(
-                        result.getObject("id", UUID.class), result.getLong("amount_minor"),
-                        result.getString("provider_transaction_no")), tenantId, request.channel(), row.merchantOrderNo())
-                        .stream().findFirst().orElse(null);
+                PaymentMatch payment = platformPayments.remove(row.merchantOrderNo());
                 String result;
                 String detail = null;
                 if (payment == null) {
@@ -282,6 +326,10 @@ final class FinanceAdminController {
                 } else if (payment.amountMinor() != row.amountMinor()) {
                     result = "AMOUNT_MISMATCH";
                     detail = "Provider and platform amounts differ";
+                    exceptions++;
+                } else if (!row.providerTransactionNo().equals(payment.providerTransactionNo())) {
+                    result = "TRANSACTION_MISMATCH";
+                    detail = "Provider and platform transaction identities differ";
                     exceptions++;
                 } else {
                     result = "MATCHED";
@@ -296,14 +344,26 @@ final class FinanceAdminController {
                         row.merchantOrderNo(), row.providerTransactionNo(), row.amountMinor(),
                         payment == null ? null : payment.amountMinor(), result, detail);
             }
+            for (PaymentMatch missing : platformPayments.values()) {
+                exceptions++;
+                jdbc.update("""
+                        insert into reconciliation_item
+                            (id, tenant_id, batch_id, payment_id, merchant_order_no, provider_transaction_no,
+                             provider_amount_minor, platform_amount_minor, result, detail)
+                        values (?, ?, ?, ?, ?, ?, 0, ?, 'MISSING_PROVIDER', ?)
+                        """, UUID.randomUUID(), tenantId, batchId, missing.id(), missing.merchantOrderNo(),
+                        missing.providerTransactionNo(), missing.amountMinor(),
+                        "Successful platform payment is absent from the complete provider statement");
+            }
             String status = exceptions == 0 ? "MATCHED" : "EXCEPTION";
+            int total = matched + exceptions;
             jdbc.update("""
-                    update reconciliation_batch set status=?, matched_count=?, exception_count=?, completed_at=now()
+                    update reconciliation_batch set status=?, total_count=?, matched_count=?, exception_count=?, completed_at=now()
                      where tenant_id=? and id=?
-                    """, status, matched, exceptions, tenantId, batchId);
+                    """, status, total, matched, exceptions, tenantId, batchId);
             audit.record("RECONCILIATION_COMPLETED", "reconciliation_batch", batchId, null,
                     Map.of("status", status, "matched", matched, "exceptions", exceptions));
-            return new ReconciliationResult(batchId, status, request.rows().size(), matched, exceptions);
+            return new ReconciliationResult(batchId, status, total, matched, exceptions);
         });
     }
 
@@ -378,13 +438,20 @@ final class FinanceAdminController {
                       join operator_organization o on o.tenant_id=r.tenant_id and o.id=r.organization_id
                      where r.tenant_id=? and r.id=? and r.status='ACTIVE' and o.status='ACTIVE'
                        and effective_from<=? and (effective_until is null or effective_until>=?)
+                     for update of r
                     """, (result, row) -> new Rule(
                     result.getObject("organization_id", UUID.class), result.getInt("share_basis_points"),
                     result.getInt("platform_service_fee_basis_points"),
                     result.getLong("fixed_service_fee_minor"), result.getInt("hierarchy_level")),
                     tenantId, request.ruleId(),
-                    request.periodEnd(), request.periodStart()).stream().findFirst()
+                    request.periodStart(), request.periodEnd()).stream().findFirst()
                     .orElseThrow(() -> new DomainException("Settlement rule is not active for the period"));
+            boolean overlaps = Boolean.TRUE.equals(jdbc.queryForObject("""
+                    select exists(select 1 from settlement_statement
+                                   where tenant_id=? and rule_id=? and status<>'CANCELLED'
+                                     and period_start<=? and period_end>=?)
+                    """, Boolean.class, tenantId, request.ruleId(), request.periodEnd(), request.periodStart()));
+            if (overlaps) throw new DomainException("A settlement statement already covers this period");
             Instant start = request.periodStart().atStartOfDay(BUSINESS_ZONE).toInstant();
             Instant endExclusive = request.periodEnd().plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
             Long payments = jdbc.queryForObject("""
@@ -411,7 +478,8 @@ final class FinanceAdminController {
                        and (?=1 or s.organization_id=?)
                     """, Long.class, tenantId, JdbcTimes.timestamp(start), JdbcTimes.timestamp(endExclusive),
                     rule.hierarchyLevel(), rule.organizationId());
-            long gross = Math.max(0, value(payments) - value(refunds));
+            long gross = Math.subtractExact(value(payments), value(refunds));
+            if (gross < 0) throw new DomainException("This period has a refund deficit requiring a carry-forward adjustment");
             SettlementCalculator.Amounts amounts = SettlementCalculator.calculate(gross,
                     rule.platformServiceFeeBasisPoints(), rule.fixedServiceFeeMinor(), rule.shareBasisPoints());
             long platformFee = amounts.platformServiceFeeMinor();
@@ -534,7 +602,24 @@ final class FinanceAdminController {
         });
     }
 
-    private RefundSeed prepareRefund(UUID tenantId, CreateRefundRequest request) {
+    private RefundSeed prepareRefund(UUID tenantId, String idempotencyKey, CreateRefundRequest request) {
+        FinanceIdempotency.Request operation = FinanceIdempotency.begin(jdbc, tenantId, "REFUND_CREATE", idempotencyKey, request);
+        if (operation.response() != null) {
+            UUID refundId = UUID.fromString(operation.response().get("refundId").toString());
+            return jdbc.query("""
+                    select r.id, r.payment_id, p.order_id, r.merchant_refund_no, p.merchant_channel_id,
+                           p.channel, p.provider_transaction_no, r.amount_minor, p.amount_minor original_amount,
+                           p.currency, r.reason, r.status
+                      from refund_transaction r
+                      join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
+                     where r.tenant_id=? and r.id=? for update of r
+                    """, (result, row) -> new RefundSeed(result.getObject("id", UUID.class),
+                    result.getObject("payment_id", UUID.class), result.getObject("order_id", UUID.class),
+                    result.getString("merchant_refund_no"), result.getObject("merchant_channel_id", UUID.class),
+                    result.getString("channel"), result.getString("provider_transaction_no"),
+                    result.getLong("amount_minor"), result.getLong("original_amount"), result.getString("currency"),
+                    result.getString("reason"), result.getString("status")), tenantId, refundId).getFirst();
+        }
         PaymentForRefund payment = jdbc.query("""
                 select id, order_id, merchant_channel_id, channel,
                        provider_transaction_no, amount_minor, currency
@@ -545,6 +630,8 @@ final class FinanceAdminController {
                 result.getString("provider_transaction_no"),
                 result.getLong("amount_minor"), result.getString("currency")), tenantId, request.paymentId())
                 .stream().findFirst().orElseThrow(() -> new DomainException("Only a successful payment can be refunded"));
+        jdbc.queryForObject("select id from charging_order where tenant_id=? and id=? for update",
+                UUID.class, tenantId, payment.orderId());
         boolean invoiceBlocksRefund = Boolean.TRUE.equals(jdbc.queryForObject("""
                 select exists(select 1 from invoice_request
                                where tenant_id=? and order_id=? and status in ('SUBMITTED','PROCESSING','ISSUED'))
@@ -567,9 +654,10 @@ final class FinanceAdminController {
                 values (?, ?, ?, ?, ?, 'CREATED', ?)
                 """, id, tenantId, payment.id(), number, request.amountMinor(), request.reason());
         audit.record("REFUND_CREATED", "refund_transaction", id, null, request);
+        FinanceIdempotency.save(jdbc, tenantId, operation, Map.of("refundId", id), 202);
         return new RefundSeed(id, payment.id(), payment.orderId(), number, payment.merchantChannelId(), payment.channel(),
                 payment.providerTransactionNo(), request.amountMinor(), payment.amountMinor(),
-                payment.currency(), request.reason());
+                payment.currency(), request.reason(), "CREATED");
     }
 
     private RefundView refundView(UUID tenantId, UUID refundId) {
@@ -661,12 +749,12 @@ final class FinanceAdminController {
     }
 
     record CreateRefundRequest(@NotNull UUID paymentId, @Min(1) long amountMinor,
-                               @NotBlank @Size(max = 500) String reason) { }
+                               @NotBlank @Size(max = 80) String reason) { }
     record ReconciliationRequest(@NotBlank String channel, @NotNull LocalDate statementDate,
                                  @NotBlank @Size(max = 128) String sourceFileHash,
-                                 @NotEmpty @Size(max = 10_000) List<@Valid ReconciliationRow> rows) { }
+                                 @NotNull @Size(max = 10_000) List<@Valid ReconciliationRow> rows) { }
     record ReconciliationRow(@NotBlank @Size(max = 64) String merchantOrderNo,
-                             @Size(max = 128) String providerTransactionNo, @Min(0) long amountMinor) { }
+                             @NotBlank @Size(max = 128) String providerTransactionNo, @Min(0) long amountMinor) { }
     record CreateSettlementRuleRequest(@NotBlank @Size(max = 160) String name,
                                        @NotNull UUID organizationId,
                                        @NotBlank @Size(max = 96) String beneficiaryCode,
@@ -703,11 +791,11 @@ final class FinanceAdminController {
     record RefundSeed(UUID id, UUID paymentId, UUID orderId, String merchantRefundNo,
                       UUID merchantChannelId, String channel,
                       String providerTransactionNo, long amountMinor, long originalPaymentAmountMinor,
-                      String currency, String reason) { }
-    record PaymentMatch(UUID id, long amountMinor, String providerTransactionNo) { }
+                      String currency, String reason, String status) { }
+    record PaymentMatch(UUID id, String merchantOrderNo, long amountMinor, String providerTransactionNo) { }
     record Rule(UUID organizationId, int shareBasisPoints, int platformServiceFeeBasisPoints,
                 long fixedServiceFeeMinor, int hierarchyLevel) { }
-    record WalletBalance(UUID id, long balanceMinor) { }
+    record WalletBalance(UUID id, long balanceMinor, long frozenMinor) { }
     record MerchantChannelView(UUID id, UUID organizationId, String organizationName,
                                String channel, String merchantId, String applicationId,
                                String secretReference, String notifyUrl, String refundNotifyUrl,

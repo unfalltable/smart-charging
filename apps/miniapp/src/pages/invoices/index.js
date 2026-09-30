@@ -6,6 +6,7 @@ Page({
   data: { loading: true, submitting: false, errorMessage: '', orders: [], invoices: [], orderIndex: 0 },
   async onShow() {
     if (!sessionStore.isLoggedIn()) {
+      this.setData({ loading: false, orders: [], invoices: [] })
       wx.showToast({ title: '请先登录', icon: 'none' })
       setTimeout(() => sessionStore.goToLogin(), 500)
       return
@@ -16,10 +17,19 @@ Page({
     try { await this.loadData() } finally { wx.stopPullDownRefresh() }
   },
   async loadData() {
+    const identity = sessionStore.getSession()
+    const identityKey = `${identity.tenantId}/${identity.customerId}`
+    if (this._identityKey !== identityKey) {
+      this._identityKey = identityKey
+      this.setData({ orders: [], invoices: [], orderIndex: 0, errorMessage: '' })
+    }
+    if (this._loading) return
+    this._loading = true
     this.setData({ loading: true, errorMessage: '' })
     try {
       const [orders, invoices] = await Promise.all([request('/charging/orders/mine'), request('/customer/finance/invoices')])
-      const invoiced = new Set(invoices.map((item) => item.orderId))
+      if (identity.customerId !== sessionStore.getSession().customerId) return
+      const invoiced = new Set(invoices.filter((item) => item.status !== 'REJECTED').map((item) => item.orderId))
       this.setData({
         orders: orders.filter((item) => item.status === 'COMPLETED' && item.paidAmountMinor >= item.payableAmountMinor && item.payableAmountMinor > 0 && !invoiced.has(item.orderId)),
         invoices: invoices.map((item) => ({
@@ -29,8 +39,12 @@ Page({
         })),
         orderIndex: 0
       })
-    } catch (error) { this.setData({ errorMessage: error?.message || '加载失败' }) }
-    finally { this.setData({ loading: false }) }
+    } catch (error) {
+      if (identityKey === `${sessionStore.getSession().tenantId}/${sessionStore.getSession().customerId}`) this.setData({ errorMessage: error?.message || '加载失败' })
+    } finally {
+      this._loading = false; this.setData({ loading: false })
+      if (sessionStore.isLoggedIn() && identityKey !== `${sessionStore.getSession().tenantId}/${sessionStore.getSession().customerId}`) await this.loadData()
+    }
   },
   chooseOrder(event) { this.setData({ orderIndex: Number(event.detail.value) }) },
   async submit(event) {

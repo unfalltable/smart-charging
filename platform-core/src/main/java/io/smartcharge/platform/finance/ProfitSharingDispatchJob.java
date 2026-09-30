@@ -1,8 +1,11 @@
 package io.smartcharge.platform.finance;
 
 import io.smartcharge.platform.audit.AuditService;
+import io.smartcharge.platform.shared.domain.DomainException;
 import io.smartcharge.platform.tenancy.TenantJdbcExecutor;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -29,7 +32,7 @@ final class ProfitSharingDispatchJob {
 
     @Scheduled(fixedDelayString = "${payments.profit-sharing-delay-ms:15000}")
     void dispatch() {
-        List<UUID> tenants = jdbc.query("select id from tenant where status='ACTIVE' order by id",
+        List<UUID> tenants = jdbc.query("select id from tenant order by id",
                 (result, row) -> result.getObject(1, UUID.class));
         for (UUID tenantId : tenants) {
             for (int handled = 0; handled < 50; handled++) {
@@ -85,7 +88,7 @@ final class ProfitSharingDispatchJob {
                            set status='FAILED', last_error=?,
                                next_attempt_at=now()+make_interval(secs => least(1800,
                                    30 * power(2, least(attempts, 6))::integer)), updated_at=now()
-                         where tenant_id=? and id=?
+                         where tenant_id=? and id=? and status='PROCESSING'
                         """, safeMessage(failure), tenantId, order.id());
                 return null;
             });
@@ -98,7 +101,8 @@ final class ProfitSharingDispatchJob {
         return tenantJdbc.readWriteAs(tenantId, () -> jdbc.query("""
                 select receiver_account, receiver_name, amount_minor, owner_type
                   from payment_profit_sharing_detail
-                 where tenant_id=? and sharing_order_id=? order by receiver_account
+                 where tenant_id=? and sharing_order_id=? and status='PENDING' and amount_minor>0
+                 order by receiver_account
                 """, (result, row) -> new PaymentGateway.ProfitSharingAllocation(
                 result.getString("receiver_account"), result.getString("receiver_name"),
                 result.getLong("amount_minor"),
@@ -108,11 +112,27 @@ final class ProfitSharingDispatchJob {
 
     private void apply(UUID tenantId, SharingOrder order, PaymentGateway.GatewayProfitSharing result) {
         tenantJdbc.readWriteAs(tenantId, () -> {
+            String current = jdbc.queryForObject("""
+                    select status from payment_profit_sharing_order where tenant_id=? and id=? for update
+                    """, String.class, tenantId, order.id());
+            if (Set.of("SUCCEEDED", "PARTIAL_FAILED", "CANCELLED").contains(current)) return null;
+            Map<String, Long> expected = new java.util.HashMap<>();
+            jdbc.query("""
+                    select receiver_account, amount_minor from payment_profit_sharing_detail
+                     where tenant_id=? and sharing_order_id=? and status<>'CANCELLED'
+                    """, (resultSet, row) -> Map.entry(resultSet.getString("receiver_account"),
+                    resultSet.getLong("amount_minor")), tenantId, order.id())
+                    .forEach(entry -> expected.put(entry.getKey(), entry.getValue()));
+            Set<String> received = new HashSet<>();
             for (PaymentGateway.ProfitSharingResult receiver : result.receivers()) {
+                if (!received.add(receiver.account()) || !expected.containsKey(receiver.account())
+                        || expected.get(receiver.account()) != receiver.amountMinor()) {
+                    throw new DomainException("Provider profit-sharing allocation does not match the submitted plan");
+                }
                 jdbc.update("""
                         update payment_profit_sharing_detail
                            set status=?, fail_reason=?, updated_at=now()
-                         where tenant_id=? and sharing_order_id=? and receiver_account=?
+                         where tenant_id=? and sharing_order_id=? and receiver_account=? and status='PENDING'
                         """, detailStatus(receiver.state()), receiver.failReason(), tenantId, order.id(),
                         receiver.account());
             }

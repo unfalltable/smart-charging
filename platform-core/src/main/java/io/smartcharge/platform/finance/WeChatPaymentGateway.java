@@ -1,10 +1,12 @@
 package io.smartcharge.platform.finance;
 
 import com.wechat.pay.java.core.RSAPublicKeyConfig;
+import com.wechat.pay.java.core.exception.ServiceException;
 import com.wechat.pay.java.core.notification.NotificationParser;
 import com.wechat.pay.java.core.notification.RequestParam;
 import com.wechat.pay.java.service.payments.jsapi.JsapiServiceExtension;
 import com.wechat.pay.java.service.payments.jsapi.model.Amount;
+import com.wechat.pay.java.service.payments.jsapi.model.CloseOrderRequest;
 import com.wechat.pay.java.service.payments.jsapi.model.Payer;
 import com.wechat.pay.java.service.payments.jsapi.model.PrepayRequest;
 import com.wechat.pay.java.service.payments.jsapi.model.PrepayWithRequestPaymentResponse;
@@ -39,6 +41,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -69,6 +73,7 @@ final class WeChatPaymentGateway implements PaymentGateway {
         request.setMchid(client.channel().merchantId());
         request.setDescription(payment.description());
         request.setOutTradeNo(payment.merchantOrderNo());
+        request.setTimeExpire(payment.expiresAt().toString());
         request.setNotifyUrl(requireHttps(client.channel().notifyUrl(), "payment notify URL"));
         Amount amount = new Amount();
         amount.setTotal(Math.toIntExact(payment.amountMinor()));
@@ -82,7 +87,10 @@ final class WeChatPaymentGateway implements PaymentGateway {
             settleInfo.setProfitSharing(true);
             request.setSettleInfo(settleInfo);
         }
-        PrepayWithRequestPaymentResponse response = client.jsapi().prepayWithRequestPayment(request);
+        PrepayWithRequestPaymentResponse response;
+        PaymentService.requireSubmissionWindow(payment.expiresAt(), Instant.now());
+        try { response = client.jsapi().prepayWithRequestPayment(request); }
+        catch (ServiceException failure) { throw classifyCreateFailure(failure); }
         Map<String, String> parameters = Map.of(
                 "appId", response.getAppId(), "timeStamp", response.getTimeStamp(),
                 "nonceStr", response.getNonceStr(), "package", response.getPackageVal(),
@@ -103,8 +111,11 @@ final class WeChatPaymentGateway implements PaymentGateway {
         amount.setTotal(refund.originalPaymentAmountMinor());
         amount.setCurrency(refund.currency());
         request.setAmount(amount);
-        Refund response = client.refunds().create(request);
-        return new GatewayRefund(response.getRefundId(), response.getStatus() == Status.SUCCESS);
+        Refund response;
+        try { response = client.refunds().create(request); }
+        catch (ServiceException failure) { throw classifyCreateFailure(failure); }
+        return new GatewayRefund(response.getRefundId(), response.getStatus() == Status.SUCCESS,
+                successTime(response.getSuccessTime(), response.getStatus() == Status.SUCCESS));
     }
 
     @Override
@@ -113,7 +124,12 @@ final class WeChatPaymentGateway implements PaymentGateway {
         QueryOrderByOutTradeNoRequest request = new QueryOrderByOutTradeNoRequest();
         request.setMchid(client.channel().merchantId());
         request.setOutTradeNo(merchantOrderNo);
-        Transaction transaction = client.jsapi().queryOrderByOutTradeNo(request);
+        Transaction transaction;
+        try { transaction = client.jsapi().queryOrderByOutTradeNo(request); }
+        catch (ServiceException failure) {
+            if (resourceMissing(failure)) throw new ProviderResourceNotFoundException();
+            throw failure;
+        }
         ProviderState state = switch (transaction.getTradeState()) {
             case SUCCESS -> ProviderState.SUCCEEDED;
             case CLOSED, REVOKED, PAYERROR -> ProviderState.FAILED;
@@ -121,7 +137,8 @@ final class WeChatPaymentGateway implements PaymentGateway {
         };
         long amount = transaction.getAmount() == null || transaction.getAmount().getTotal() == null
                 ? 0 : transaction.getAmount().getTotal();
-        return new GatewayPaymentStatus(transaction.getTransactionId(), amount, state);
+        return new GatewayPaymentStatus(transaction.getTransactionId(), amount, state,
+                successTime(transaction.getSuccessTime(), state == ProviderState.SUCCEEDED));
     }
 
     @Override
@@ -129,15 +146,26 @@ final class WeChatPaymentGateway implements PaymentGateway {
         Client client = client(tenantId, merchantChannelId);
         QueryByOutRefundNoRequest request = new QueryByOutRefundNoRequest();
         request.setOutRefundNo(merchantRefundNo);
-        Refund refund = client.refunds().queryByOutRefundNo(request);
-        ProviderState state = switch (refund.getStatus()) {
-            case SUCCESS -> ProviderState.SUCCEEDED;
-            case CLOSED, ABNORMAL -> ProviderState.FAILED;
-            default -> ProviderState.PENDING;
-        };
+        Refund refund;
+        try { refund = client.refunds().queryByOutRefundNo(request); }
+        catch (ServiceException failure) {
+            if (resourceMissing(failure)) throw new ProviderResourceNotFoundException();
+            throw failure;
+        }
+        ProviderState state = refundState(refund.getStatus());
         long amount = refund.getAmount() == null || refund.getAmount().getRefund() == null
                 ? 0 : refund.getAmount().getRefund();
-        return new GatewayRefundStatus(refund.getRefundId(), amount, state);
+        return new GatewayRefundStatus(refund.getRefundId(), amount, state,
+                successTime(refund.getSuccessTime(), state == ProviderState.SUCCEEDED));
+    }
+
+    @Override
+    public void closePayment(UUID tenantId, UUID merchantChannelId, String merchantOrderNo) {
+        Client client = client(tenantId, merchantChannelId);
+        CloseOrderRequest request = new CloseOrderRequest();
+        request.setMchid(client.channel().merchantId());
+        request.setOutTradeNo(merchantOrderNo);
+        client.jsapi().closeOrder(request);
     }
 
     @Override
@@ -151,7 +179,8 @@ final class WeChatPaymentGateway implements PaymentGateway {
         }
         return new VerifiedCallback(eventId(headers, body), transaction.getOutTradeNo(),
                 transaction.getTransactionId(), transaction.getAmount().getTotal(),
-                transaction.getTradeState() == Transaction.TradeStateEnum.SUCCESS, body);
+                transaction.getTradeState() == Transaction.TradeStateEnum.SUCCESS,
+                successTime(transaction.getSuccessTime(), transaction.getTradeState() == Transaction.TradeStateEnum.SUCCESS), body);
     }
 
     @Override
@@ -160,7 +189,45 @@ final class WeChatPaymentGateway implements PaymentGateway {
         Client client = client(tenantId, merchantChannelId);
         RefundNotification refund = client.parser().parse(request(headers, body), RefundNotification.class);
         return new VerifiedRefundCallback(eventId(headers, body), refund.getOutRefundNo(), refund.getRefundId(),
-                refund.getAmount().getRefund(), refund.getRefundStatus() == Status.SUCCESS, body);
+                refund.getTransactionId(), refund.getAmount().getRefund(), refundState(refund.getRefundStatus()),
+                successTime(refund.getSuccessTime(), refund.getRefundStatus() == Status.SUCCESS), body);
+    }
+
+    static ProviderState refundState(Status status) {
+        if (status == null) throw new DomainException("WeChat refund state is missing");
+        return switch (status) {
+            case SUCCESS -> ProviderState.SUCCEEDED;
+            case CLOSED -> ProviderState.FAILED;
+            case PROCESSING, ABNORMAL -> ProviderState.PENDING;
+        };
+    }
+
+    static RuntimeException classifyCreateFailure(ServiceException failure) {
+        String code = failure.getErrorCode();
+        int status = failure.getHttpStatusCode();
+        boolean rejected = code != null && switch (status) {
+            case 400 -> java.util.Set.of("PARAM_ERROR", "INVALID_REQUEST", "APPID_MCHID_NOT_MATCH", "MCH_NOT_EXISTS").contains(code);
+            case 401 -> "SIGN_ERROR".equals(code);
+            case 403 -> java.util.Set.of("NO_AUTH", "NOT_ENOUGH", "USER_ACCOUNT_ABNORMAL", "ACCOUNT_ERROR").contains(code);
+            case 404 -> java.util.Set.of("MCH_NOT_EXISTS", "RESOURCE_NOT_EXISTS").contains(code);
+            default -> false;
+        };
+        return rejected ? new ProviderRequestRejectedException(code) : failure;
+    }
+
+    static boolean resourceMissing(ServiceException failure) {
+        return failure.getHttpStatusCode() == 404 && failure.getErrorCode() != null
+                && java.util.Set.of("RESOURCE_NOT_EXISTS", "ORDER_NOT_EXIST").contains(failure.getErrorCode());
+    }
+
+    static Instant successTime(String value, boolean succeeded) {
+        if (!succeeded) return null;
+        if (value == null || value.isBlank()) throw new DomainException("WeChat success time is missing");
+        try {
+            return OffsetDateTime.parse(value).toInstant();
+        } catch (java.time.format.DateTimeParseException invalid) {
+            throw new DomainException("WeChat success time is invalid");
+        }
     }
 
     @Override

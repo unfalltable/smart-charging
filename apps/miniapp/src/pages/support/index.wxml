@@ -1,4 +1,5 @@
 <view class="page">
+  <view wx:if="{{errorMessage && tickets.length}}" class="card inline-error" role="alert"><text>{{errorMessage}}</text><button class="secondary" bindtap="loadTickets">重新加载</button></view>
   <form class="card form" bindsubmit="submit">
     <text class="title">故障报修或意见反馈</text>
     <view class="field"><text class="field-label">问题标题</text><input class="field-control" name="title" value="{{title}}" maxlength="200" placeholder="简要说明问题" bindinput="updateTitle"/></view>

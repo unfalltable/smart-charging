@@ -60,7 +60,7 @@ final class AdminAuthenticationService {
                         new AuthenticationFailureException("登录失败次数过多，请在15分钟后重试"));
             }
             if (account.passwordHash() == null || !passwords.matches(password, account.passwordHash())) {
-                int failures = account.failedLoginCount() + 1;
+                int failures = (account.lockedUntil() == null ? account.failedLoginCount() : 0) + 1;
                 Instant lockedUntil = failures >= MAX_FAILURES
                         ? Instant.now().plus(LOCK_MINUTES, ChronoUnit.MINUTES) : null;
                 jdbc.update("""
@@ -143,8 +143,9 @@ final class AdminAuthenticationService {
     }
 
     private static void validateNewPassword(String password) {
-        if (password == null || password.length() < 12 || password.length() > 128) {
-            throw new IllegalArgumentException("新密码长度必须为12至128个字符");
+        if (password == null || password.length() < 12
+                || password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72) {
+            throw new IllegalArgumentException("新密码至少12个字符，UTF-8长度不能超过72字节");
         }
         boolean upper = password.chars().anyMatch(Character::isUpperCase);
         boolean lower = password.chars().anyMatch(Character::isLowerCase);

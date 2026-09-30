@@ -60,6 +60,8 @@ h1 { margin: 4px 0 0; font-size: 30px; letter-spacing: -.5px; }
 .tasks { list-style: none; padding: 15px 0 0; margin: 0; }
 .tasks li { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #edf0f4; }
 .tasks b { font-size: 20px; }
+.tasks button { min-height: 40px; padding: 8px 12px; border: 1px solid #cde7e1; border-radius: 8px; color: #0d715d; background: #edf8f5; cursor: pointer; }
+.tasks button:disabled { cursor: wait; opacity: .55; }
 .tag { border-radius: 7px; padding: 5px 8px; font-size: 12px; }
 .danger { color: #c74d4d; background: #fff0f0; }.warning { color: #a06a12; background: #fff7e4; }.info { color: #286fa8; background: #eef7ff; }.neutral { color: #58667a; background: #f1f3f6; }
 .forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
@@ -138,6 +140,10 @@ td small { display: block; color: #8a96a8; margin-top: 3px; }
 .access-policy { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px; margin-bottom: 18px; padding: 15px 18px; border: 1px solid #cde7e1; border-radius: 12px; background: #f2fbf8; }
 .access-policy span { color: #607369; font-size: 13px; }.access-policy em { color: #0d785f; font-size: 12px; font-style: normal; font-weight: 700; }
 .table-scroll { overflow-x: auto; }
+.page-body { border: 0; padding: 0; margin: 0; min-width: 0; }
+.form-hint { grid-column: 1/-1; margin: 0; color: #53675f; line-height: 1.65; }
+.credential-notice code { overflow-wrap: anywhere; min-width: 0; }
+.nav-item:disabled { cursor: wait; }
 .table-scroll table { min-width: 880px; }
 .table-scroll .platform-tenant-table { min-width: 1260px; }
 .empty-cell { padding: 28px; color: #8290a2; text-align: center; }

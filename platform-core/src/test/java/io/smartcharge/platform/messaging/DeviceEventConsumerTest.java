@@ -35,6 +35,9 @@ class DeviceEventConsumerTest {
         when(jdbc.query(contains("from device_route"),
                 org.mockito.ArgumentMatchers.<RowMapper<DeviceEventConsumer.DeviceRoute>>any(), eq("PILE001")))
                 .thenReturn(List.of(new DeviceEventConsumer.DeviceRoute(tenantId, deviceId)));
+        when(jdbc.query(contains("select id from device"),
+                org.mockito.ArgumentMatchers.<RowMapper<UUID>>any(), eq(tenantId), eq(deviceId)))
+                .thenReturn(List.of(deviceId));
         when(tenantJdbc.readWriteAs(eq(tenantId), any())).thenAnswer(invocation ->
                 ((Supplier<?>) invocation.getArgument(1)).get());
         when(jdbc.update(contains("insert into device_message"), any(Object[].class))).thenAnswer(invocation -> {

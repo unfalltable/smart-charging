@@ -20,16 +20,16 @@ class ChargingOrderRepository {
     }
 
     Optional<ChargingOrderService.CreatedOrder> findByIdempotencyKey(UUID tenantId, String key,
-                                                                     UUID requestedConnectorId) {
+                                                                     UUID requestedCustomerId, UUID requestedConnectorId) {
         ExistingOrder existing = jdbc.query("""
-                select id, order_no, status, connector_id
+                select id, order_no, status, customer_id, connector_id
                   from charging_order
                  where tenant_id = ? and idempotency_key = ?
                 """, (result, row) -> new ExistingOrder(mapCreatedOrder(result, row),
-                result.getObject("connector_id", UUID.class)), tenantId, key).stream().findFirst().orElse(null);
+                result.getObject("customer_id", UUID.class), result.getObject("connector_id", UUID.class)), tenantId, key).stream().findFirst().orElse(null);
         if (existing == null) return Optional.empty();
-        if (!existing.connectorId().equals(requestedConnectorId)) {
-            throw new DomainException("Idempotency key was reused for a different connector");
+        if (!existing.customerId().equals(requestedCustomerId) || !existing.connectorId().equals(requestedConnectorId)) {
+            throw new DomainException("Idempotency key was reused for a different charging request");
         }
         return Optional.of(existing.order());
     }
@@ -37,7 +37,11 @@ class ChargingOrderRepository {
     List<OrderSummary> findForCustomer(UUID tenantId, UUID customerId) {
         return jdbc.query("""
                 select o.id, o.order_no, s.name as station_name, c.connector_no, o.status,
-                       coalesce(cs.energy_wh, 0) as energy_wh, o.payable_amount_minor, o.paid_amount_minor
+                       coalesce(cs.energy_wh, 0) as energy_wh, o.payable_amount_minor, o.paid_amount_minor,
+                       coalesce((select sum(r.amount_minor) from refund_transaction r
+                         join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
+                        where p.tenant_id=o.tenant_id and p.order_id=o.id and r.status='SUCCEEDED'),0)
+                        as refunded_amount_minor
                   from charging_order o
                   join connector c on c.id = o.connector_id and c.tenant_id = o.tenant_id
                   join device d on d.id = c.device_id and d.tenant_id = o.tenant_id
@@ -50,7 +54,8 @@ class ChargingOrderRepository {
                         result.getObject("id", UUID.class), result.getString("order_no"),
                         result.getString("station_name"), result.getInt("connector_no"),
                         ChargeOrderStatus.valueOf(result.getString("status")), result.getLong("energy_wh"),
-                        result.getLong("payable_amount_minor"), result.getLong("paid_amount_minor")), tenantId, customerId);
+                        result.getLong("payable_amount_minor"), result.getLong("paid_amount_minor"),
+                        result.getLong("refunded_amount_minor")), tenantId, customerId);
     }
 
     OrderLock lockCustomerOrder(UUID tenantId, UUID customerId, UUID orderId) {
@@ -70,21 +75,30 @@ class ChargingOrderRepository {
 
     ConnectorLock lockAvailableConnector(UUID tenantId, UUID connectorId) {
         return jdbc.query("""
-                select device_id, status, tariff_id
-                  from connector
-                 where tenant_id = ? and id = ?
-                   for update
+                select c.device_id, c.status, c.tariff_id
+                  from connector c
+                  join device d on d.tenant_id=c.tenant_id and d.id=c.device_id
+                  join station s on s.tenant_id=d.tenant_id and s.id=d.station_id
+                 where c.tenant_id = ? and c.id = ? and s.status='ACTIVE'
+                   and d.status='ONLINE' and d.last_seen_at >= now()-interval '3 minutes'
+                   and not exists (select 1 from charging_order o
+                                    where o.tenant_id=c.tenant_id and o.connector_id=c.id
+                                      and o.status in ('START_PENDING','CHARGING','STOP_PENDING'))
+                   for update of c
                 """, (result, row) -> new ConnectorLock(
                         result.getObject("device_id", UUID.class), result.getString("status"),
                         result.getObject("tariff_id", UUID.class)),
                 tenantId, connectorId).stream().findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Connector does not exist"));
+                .orElseThrow(() -> new DomainException("Connector is unavailable, busy, or the device is offline"));
     }
 
     boolean customerExists(UUID tenantId, UUID customerId) {
-        return Boolean.TRUE.equals(jdbc.queryForObject(
-                "select exists(select 1 from customer where tenant_id = ? and id = ? and status = 'ACTIVE')",
-                Boolean.class, tenantId, customerId));
+        return !jdbc.query("""
+                select c.id from customer c join tenant t on t.id=c.tenant_id
+                 where c.tenant_id=? and c.id=? and c.status='ACTIVE' and t.status='ACTIVE'
+                 for update of c for share of t
+                """,
+                (result, row) -> result.getObject(1, UUID.class), tenantId, customerId).isEmpty();
     }
 
     boolean requiredAgreementsAccepted(UUID tenantId, UUID customerId) {
@@ -97,6 +111,16 @@ class ChargingOrderRepository {
                             where a.tenant_id=d.tenant_id and a.document_id=d.id and a.customer_id=?
                        )
                 )
+                """, Boolean.class, tenantId, customerId));
+    }
+
+    boolean hasUnpaidCompletedOrders(UUID tenantId, UUID customerId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists(select 1 from charging_order o where o.tenant_id=? and o.customer_id=?
+                    and o.status='COMPLETED' and o.payable_amount_minor>o.paid_amount_minor +
+                    coalesce((select sum(r.amount_minor) from refund_transaction r
+                      join payment_transaction p on p.tenant_id=r.tenant_id and p.id=r.payment_id
+                     where p.tenant_id=o.tenant_id and p.order_id=o.id and r.status='SUCCEEDED'),0))
                 """, Boolean.class, tenantId, customerId));
     }
 
@@ -190,5 +214,5 @@ class ChargingOrderRepository {
 
     record ConnectorLock(UUID deviceId, String status, UUID tariffId) { }
     record OrderLock(ChargeOrderStatus status, UUID connectorId, UUID deviceId, int connectorNo) { }
-    record ExistingOrder(ChargingOrderService.CreatedOrder order, UUID connectorId) { }
+    record ExistingOrder(ChargingOrderService.CreatedOrder order, UUID customerId, UUID connectorId) { }
 }

@@ -42,6 +42,11 @@ final class QrTokenVerifier {
         return new VerifiedQr(tenantId, connectorId);
     }
 
+    String issue(UUID tenantId, UUID connectorId) {
+        String body = "sc1." + tenantId + "." + connectorId;
+        return body + "." + HexFormat.of().formatHex(sign(body));
+    }
+
     private byte[] sign(String value) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

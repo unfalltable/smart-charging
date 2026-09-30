@@ -1,0 +1,13 @@
+{$PUBLIC_HOST} {
+    encode zstd gzip
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy admin-web:8080 {
+        # Caddy rebuilds X-Forwarded-* from the real client; do not pass a
+        # client-supplied RFC 7239 header that Spring would prefer over it.
+        header_up -Forwarded
+        header_up -X-Forwarded-Prefix
+        header_up -X-Real-IP
+    }
+}

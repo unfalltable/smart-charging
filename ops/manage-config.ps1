@@ -84,7 +84,9 @@ try {
         }
         'credentials' {
             Write-Host 'Sensitive credentials are shown because the credentials command was explicitly requested.' -ForegroundColor Yellow
-            Write-Host "Platform login URL: http://127.0.0.1:$([string]$values['ADMIN_WEB_PORT'])/"
+            $publicHost = [string]$values['PUBLIC_HOST']
+            $loginUrl = if ($publicHost) { "https://$publicHost/" } else { "http://127.0.0.1:$([string]$values['ADMIN_WEB_PORT'])/" }
+            Write-Host "Platform login URL: $loginUrl"
             Write-Host "Platform username: $([string]$values['PLATFORM_ADMIN_USERNAME'])"
             Write-Host "Platform subject: $([string]$values['PLATFORM_ADMIN_SUBJECT'])"
             Write-Host "Platform temporary password: $([string]$values['PLATFORM_ADMIN_PASSWORD'])"

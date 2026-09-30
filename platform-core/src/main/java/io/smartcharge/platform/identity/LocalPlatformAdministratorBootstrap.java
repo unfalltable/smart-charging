@@ -83,12 +83,13 @@ final class LocalPlatformAdministratorBootstrap implements ApplicationRunner {
             throw new IllegalStateException("PLATFORM_ADMIN_USERNAME must contain 3 to 64 safe characters");
         }
         String password = properties.getPassword();
-        if (password.length() < 12 || !password.chars().anyMatch(Character::isUpperCase)
+        if (password.length() < 12 || password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 72
+                || !password.chars().anyMatch(Character::isUpperCase)
                 || !password.chars().anyMatch(Character::isLowerCase)
                 || !password.chars().anyMatch(Character::isDigit)
                 || !password.chars().anyMatch(value -> !Character.isLetterOrDigit(value))) {
             throw new IllegalStateException(
-                    "PLATFORM_ADMIN_PASSWORD must contain at least 12 characters with upper/lower case, number and symbol");
+                    "PLATFORM_ADMIN_PASSWORD must contain at least 12 characters, at most 72 UTF-8 bytes, with upper/lower case, number and symbol");
         }
         if (properties.getDisplayName().isBlank()) {
             throw new IllegalStateException("PLATFORM_ADMIN_DISPLAY_NAME is required");

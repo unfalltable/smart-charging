@@ -7,33 +7,19 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.UUID;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers(disabledWithoutDocker = true)
 class DatabaseIsolationIntegrationTest {
     private static final UUID TENANT_A = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static final UUID TENANT_B = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
-            .withDatabaseName("charging_test")
-            .withUsername("migration_owner")
-            .withPassword("migration-password");
+    private static DatabaseTestSupport.Database database;
 
     @BeforeAll
     static void migrateAndSeed() throws SQLException {
-        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                .locations("classpath:db/migration").load().migrate();
+        database = DatabaseTestSupport.database();
         try (Connection connection = owner()) {
-            connection.createStatement().execute("create role app_runtime login password 'runtime-password' nosuperuser nobypassrls");
-            connection.createStatement().execute("grant usage on schema public to app_runtime");
-            connection.createStatement().execute("grant select, insert, update, delete on all tables in schema public to app_runtime");
-            connection.createStatement().execute("grant usage, select on all sequences in schema public to app_runtime");
             connection.createStatement().execute("insert into tenant(id, code, display_name, status) values "
                     + "('" + TENANT_A + "','tenant-a','Tenant A','ACTIVE'),"
                     + "('" + TENANT_B + "','tenant-b','Tenant B','ACTIVE')");
@@ -93,10 +79,10 @@ class DatabaseIsolationIntegrationTest {
     }
 
     private static Connection owner() throws SQLException {
-        return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        return database.owner();
     }
 
     private static Connection runtime() throws SQLException {
-        return DriverManager.getConnection(POSTGRES.getJdbcUrl(), "app_runtime", "runtime-password");
+        return database.runtime();
     }
 }

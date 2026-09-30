@@ -28,6 +28,7 @@ server:
   port: ${MANAGEMENT_PORT:9001}
 nats:
   url: ${NATS_URL:nats://localhost:4222}
+  token: ${NATS_TOKEN:}
 management:
   server:
     port: ${MANAGEMENT_PORT:9001}

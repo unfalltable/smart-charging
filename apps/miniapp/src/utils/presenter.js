@@ -1,8 +1,8 @@
 const STATUS_LABELS = Object.freeze({
   CREATED: '待启动', START_PENDING: '启动中', CHARGING: '充电中',
   STOP_PENDING: '停止中', COMPLETED: '已完成', CANCELLED: '已取消', FAILED: '异常',
-  PROCESSING: '处理中', SUCCEEDED: '已成功', REFUNDED: '已退款', CLOSED: '已关闭',
-  SUBMITTED: '已申请', ISSUED: '已开票', REJECTED: '已驳回',
+  PROCESSING: '处理中', SUCCEEDED: '已成功', REFUNDED: '已退款', CLOSED: '已关闭', ABNORMAL: '需人工核查',
+  SUBMITTED: '已申请', ISSUED: '已开票', REJECTED: '已驳回', RED_ISSUED: '已红冲',
   OPEN: '待处理', IN_PROGRESS: '处理中', RESOLVED: '已解决', ACTIVE: '正常', FROZEN: '已冻结'
 })
 
@@ -12,12 +12,12 @@ function statusLabel(status) {
 
 function yuan(value) {
   const number = Number(value)
-  return Number.isFinite(number) ? (number / 100).toFixed(2) : '0.00'
+  return value == null || !Number.isFinite(number) ? '—' : (number / 100).toFixed(2)
 }
 
 function kilowattHours(value) {
   const number = Number(value)
-  return Number.isFinite(number) ? (number / 1000).toFixed(2) : '0.00'
+  return value == null || !Number.isFinite(number) ? '—' : (number / 1000).toFixed(2)
 }
 
 function message(error, fallback = '操作失败，请稍后重试') {

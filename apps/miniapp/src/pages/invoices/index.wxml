@@ -1,4 +1,5 @@
 <view class="page">
+  <view wx:if="{{errorMessage && invoices.length}}" class="card inline-error" role="alert"><text>{{errorMessage}}</text><button class="secondary" bindtap="loadData">重新加载</button></view>
   <view wx:if="{{loading && !invoices.length}}" class="loading-state" aria-live="polite">正在加载发票信息…</view>
   <view wx:elif="{{errorMessage && !invoices.length}}" class="card error-state" aria-live="assertive">
     <text class="state-title">发票信息加载失败</text><text class="state-message">{{errorMessage}}</text>

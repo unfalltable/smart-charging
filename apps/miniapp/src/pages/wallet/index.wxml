@@ -1,4 +1,5 @@
 <view class="page">
+  <view wx:if="{{errorMessage && wallet}}" class="card inline-error" role="alert"><text>{{errorMessage}}</text><button class="secondary" bindtap="loadData">重新加载</button></view>
   <view wx:if="{{loading && !wallet}}" class="loading-state" aria-live="polite">正在加载账户…</view>
   <view wx:elif="{{errorMessage && !wallet}}" class="card error-state" aria-live="assertive">
     <text class="state-title">账户加载失败</text><text class="state-message">{{errorMessage}}</text>
@@ -14,6 +15,13 @@
   <view wx:for="{{payments}}" wx:key="id" class="card payment">
     <view><text class="order-no">{{item.orderNo}}</text><text class="status">{{item.statusText}}</text></view>
     <view><text class="muted">{{item.channelText}}</text><text class="payment-amount">¥ {{item.amountYuan}}</text></view>
+  </view>
+  <view class="section-title">退款记录</view>
+  <view wx:if="{{refunds.length === 0}}" class="card empty-state compact"><text class="state-title">暂无退款记录</text></view>
+  <view wx:for="{{refunds}}" wx:key="id" class="card payment">
+    <view><text class="order-no">{{item.orderNo}}</text><text class="status">{{item.statusText}}</text></view>
+    <view><text class="muted">{{item.reason}}</text><text class="payment-amount">¥ {{item.amountYuan}}</text></view>
+    <text class="muted">退款进度以支付机构结果为准</text>
   </view>
   </block>
 </view>

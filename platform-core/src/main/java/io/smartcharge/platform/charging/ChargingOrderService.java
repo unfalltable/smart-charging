@@ -35,7 +35,7 @@ final class ChargingOrderService {
     CreatedOrder createAndRequestStart(String idempotencyKey, UUID customerId, UUID connectorId) {
         validateIdempotencyKey(idempotencyKey);
         UUID tenantId = TenantContext.requireTenantId();
-        return tenantJdbc.readWrite(() -> repository.findByIdempotencyKey(tenantId, idempotencyKey, connectorId)
+        return tenantJdbc.readWrite(() -> repository.findByIdempotencyKey(tenantId, idempotencyKey, customerId, connectorId)
                 .orElseGet(() -> createNew(tenantId, idempotencyKey, customerId, connectorId)));
     }
 
@@ -65,11 +65,16 @@ final class ChargingOrderService {
         if (!repository.customerExists(tenantId, customerId)) {
             throw new IllegalArgumentException("Customer does not exist or is inactive");
         }
+        CreatedOrder serializedResult = repository.findByIdempotencyKey(tenantId, idempotencyKey, customerId, connectorId).orElse(null);
+        if (serializedResult != null) return serializedResult;
+        if (repository.hasUnpaidCompletedOrders(tenantId, customerId)) {
+            throw new DomainException("请先支付已完成的充电订单，再开始新的充电");
+        }
         if (!repository.requiredAgreementsAccepted(tenantId, customerId)) {
             throw new DomainException("Required service agreements must be accepted before charging");
         }
         ChargingOrderRepository.ConnectorLock connector = repository.lockAvailableConnector(tenantId, connectorId);
-        CreatedOrder concurrentResult = repository.findByIdempotencyKey(tenantId, idempotencyKey, connectorId).orElse(null);
+        CreatedOrder concurrentResult = repository.findByIdempotencyKey(tenantId, idempotencyKey, customerId, connectorId).orElse(null);
         if (concurrentResult != null) {
             return concurrentResult;
         }
@@ -85,7 +90,7 @@ final class ChargingOrderService {
         ChargingOrder order = ChargingOrder.create(orderId, tenantId, customerId, connectorId);
         order.requestStart();
         if (repository.insertOrder(order, connector.tariffId(), orderNo, idempotencyKey) == 0) {
-            return repository.findByIdempotencyKey(tenantId, idempotencyKey, connectorId).orElseThrow();
+            return repository.findByIdempotencyKey(tenantId, idempotencyKey, customerId, connectorId).orElseThrow();
         }
         repository.recordStatus(tenantId, orderId, null, "START_PENDING", "CUSTOMER_REQUESTED_START", "customer");
         repository.reserveConnector(tenantId, connectorId);

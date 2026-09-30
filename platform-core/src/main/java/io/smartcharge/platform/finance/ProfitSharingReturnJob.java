@@ -29,7 +29,7 @@ final class ProfitSharingReturnJob {
 
     @Scheduled(fixedDelayString = "${payments.profit-sharing-return-delay-ms:30000}")
     void dispatch() {
-        List<UUID> tenants = jdbc.query("select id from tenant where status='ACTIVE' order by id",
+        List<UUID> tenants = jdbc.query("select id from tenant order by id",
                 (result, row) -> result.getObject(1, UUID.class));
         for (UUID tenantId : tenants) {
             cancelImpossibleReturns(tenantId);
@@ -103,6 +103,10 @@ final class ProfitSharingReturnJob {
                             order.outOrderNo(), order.outReturnNo(),
                             order.receiverAccount(), order.amountMinor(), "用户订单退款分账回退"));
             tenantJdbc.readWriteAs(tenantId, () -> {
+                String current = jdbc.queryForObject("""
+                        select status from payment_profit_sharing_return where tenant_id=? and id=? for update
+                        """, String.class, tenantId, order.id());
+                if ("SUCCEEDED".equals(current) || "CANCELLED".equals(current)) return null;
                 String status = switch (result.state()) {
                     case SUCCEEDED -> "SUCCEEDED";
                     case PENDING -> "PROCESSING";
@@ -133,7 +137,7 @@ final class ProfitSharingReturnJob {
                            set status='FAILED', last_error=?,
                                next_attempt_at=now()+make_interval(secs => least(1800,
                                    30 * power(2, least(attempts, 6))::integer)), updated_at=now()
-                         where tenant_id=? and id=?
+                         where tenant_id=? and id=? and status='PROCESSING'
                         """, safeMessage(failure), tenantId, order.id());
                 return null;
             });

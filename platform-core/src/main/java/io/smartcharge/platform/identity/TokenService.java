@@ -1,6 +1,6 @@
 package io.smartcharge.platform.identity;
 
-import io.smartcharge.platform.shared.domain.DomainException;
+import io.smartcharge.platform.shared.domain.AuthenticationFailureException;
 import io.smartcharge.platform.shared.persistence.JdbcTimes;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -46,13 +46,13 @@ final class TokenService {
                 result.getObject("family_id", UUID.class), result.getTimestamp("revoked_at") == null ? null
                         : result.getTimestamp("revoked_at").toInstant(),
                 result.getTimestamp("expires_at").toInstant()), tenantId, hash)
-                .stream().findFirst().orElseThrow(() -> new DomainException("Refresh token is invalid or expired"));
+                .stream().findFirst().orElseThrow(() -> new AuthenticationFailureException("登录状态已失效，请重新登录"));
         if (current.revokedAt() != null) {
             jdbc.update("update auth_refresh_token set revoked_at=coalesce(revoked_at,now()) where tenant_id=? and family_id=?",
                     tenantId, current.familyId());
-            throw new DomainException("Refresh token reuse was detected; the session has been revoked");
+            throw new AuthenticationFailureException("检测到登录凭据重复使用，会话已撤销");
         }
-        if (!current.expiresAt().isAfter(Instant.now())) throw new DomainException("Refresh token is invalid or expired");
+        if (!current.expiresAt().isAfter(Instant.now())) throw new AuthenticationFailureException("登录状态已过期，请重新登录");
         return issue(tenantId, current.customerId(), current.id(), current.familyId());
     }
 
@@ -67,8 +67,15 @@ final class TokenService {
 
     private Session issue(UUID tenantId, UUID customerId, UUID replacedTokenId, UUID existingFamilyId) {
         Instant now = Instant.now();
+        boolean active = !jdbc.query("""
+                select c.id from customer c join tenant t on t.id=c.tenant_id
+                 where c.tenant_id=? and c.id=? and c.status='ACTIVE' and t.status='ACTIVE' for update of c
+                """, (row, index) -> row.getObject(1, UUID.class), tenantId, customerId).isEmpty();
+        if (!active) throw new AuthenticationFailureException("用户或运营商账号已停用");
         long accessMinutes = properties.accessTokenMinutes() > 0 ? properties.accessTokenMinutes() : 15;
         long refreshDays = properties.refreshTokenDays() > 0 ? properties.refreshTokenDays() : 30;
+        UUID refreshId = UUID.randomUUID();
+        UUID familyId = existingFamilyId == null ? refreshId : existingFamilyId;
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .issuer(properties.appIssuer())
                 .subject("customer:" + customerId)
@@ -78,6 +85,7 @@ final class TokenService {
                 .audience(List.of(properties.apiAudience()))
                 .claim("tenant_ids", List.of(tenantId.toString()))
                 .claim("customer_id", customerId.toString())
+                .claim("refresh_family_id", familyId.toString())
                 .claim("scope", "customer")
                 .build();
         String accessToken = encoder.encode(JwtEncoderParameters.from(
@@ -85,8 +93,6 @@ final class TokenService {
         byte[] refreshBytes = new byte[32];
         random.nextBytes(refreshBytes);
         String refreshToken = Base64.getUrlEncoder().withoutPadding().encodeToString(refreshBytes);
-        UUID refreshId = UUID.randomUUID();
-        UUID familyId = existingFamilyId == null ? refreshId : existingFamilyId;
         jdbc.update("""
                 insert into auth_refresh_token
                     (id, tenant_id, customer_id, token_hash, expires_at, family_id)

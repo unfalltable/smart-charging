@@ -20,6 +20,7 @@ $configurationErrors = @(Test-DeploymentConfiguration -Workspace $workspace -Val
 if ($configurationErrors.Count -gt 0) {
     throw "Deployment configuration is invalid. Edit .env, then run config-manager.cmd validate.`n - $($configurationErrors -join "`n - ")"
 }
+[void](Set-DeploymentProcessConfiguration -Values $configuration)
 [void](Export-MiniappDeploymentConfiguration -Workspace $workspace -Values $configuration)
 
 $paymentDirectory = Resolve-ConfigurationDirectory -Workspace $workspace -ConfiguredPath ([string]$configuration['WECHAT_PAYMENT_DIRECTORY'])
@@ -52,17 +53,50 @@ $deviceGatewayEnabled = Get-ConfigurationBoolean -Values $configuration -Name 'D
 if ($deviceGatewayEnabled) {
     $compose += @('--profile', 'device')
 }
+$publicHost = [string]$configuration['PUBLIC_HOST']
+if (-not [string]::IsNullOrWhiteSpace($publicHost)) {
+    $compose += @('--profile', 'production')
+}
 Push-Location $workspace
 try {
-    $buildServices = @('core', 'admin-web')
+    $buildServices = @('core', 'admin-web', 'snapshot-tool')
     if ($deviceGatewayEnabled) { $buildServices += 'device-gateway' }
 
-    & docker @compose build @buildServices
+    & docker @compose --profile maintenance build @buildServices
     if ($LASTEXITCODE -ne 0) { throw 'Docker image build failed.' }
     if ($BuildOnly) {
         Write-Host 'All Docker images were built successfully.' -ForegroundColor Green
         exit 0
     }
+
+    $paymentFiles = @()
+    if (Get-ConfigurationBoolean -Values $configuration -Name 'WECHAT_PAYMENT_ENABLED') {
+        $paymentFiles += '/run/secrets/wechat-pay/merchant-private-key.pem'
+        $paymentFiles += '/run/secrets/wechat-pay/wechat-pay-public-key.pem'
+    }
+    foreach ($prefix in Get-CustomMerchantConfigurationPrefixes -Values $configuration) {
+        $paymentFiles += [string]$configuration["${prefix}_PRIVATE_KEY_PATH"]
+        $paymentFiles += [string]$configuration["${prefix}_PUBLIC_KEY_PATH"]
+    }
+    $readableCheck = 'for material_path do test -r $material_path || exit 1; done'
+    if ($paymentFiles.Count -gt 0) {
+        & docker @compose run --rm --no-deps --entrypoint /bin/sh core -c $readableCheck material-check @paymentFiles
+        if ($LASTEXITCODE -ne 0) {
+            throw 'The core container UID 10001 cannot read its configured payment key material. Grant this UID read/traverse access through a controlled ACL; do not make private keys world-readable.'
+        }
+    }
+    if ($deviceGatewayEnabled) {
+        $deviceFiles = @('/run/secrets/device-tls/tls.crt', '/run/secrets/device-tls/tls.key', '/run/secrets/device-tls/ca.crt')
+        & docker @compose run --rm --no-deps --entrypoint /bin/sh device-gateway -c $readableCheck material-check @deviceFiles
+        if ($LASTEXITCODE -ne 0) {
+            throw 'The device gateway UID 10001 cannot read its TLS material. Grant read/traverse access through a controlled ACL; startup will not change certificate ownership.'
+        }
+    }
+
+    # Re-run the idempotent role bootstrap even when the old task exited cleanly.
+    # Only this stateless container is replaced; named data volumes are retained.
+    & docker @compose rm --force --stop database-bootstrap
+    if ($LASTEXITCODE -ne 0) { throw 'Could not refresh the database role bootstrap task.' }
 
     & docker @compose up --detach --no-build --remove-orphans
     if ($LASTEXITCODE -ne 0) {
@@ -90,11 +124,17 @@ try {
             $revisionReady = [string]$build.build.revision -eq $buildRevision
             $webRevision = (Convert-HttpContentToText -Content $webBuild.Content).Trim()
             $webRevisionReady = $webRevision -eq $buildRevision
+            $gatewayReady = $true
+            if ($deviceGatewayEnabled) {
+                $gatewayPort = [string]$configuration['DEVICE_MANAGEMENT_PORT']
+                $gateway = Invoke-RestMethod -Uri "http://127.0.0.1:$gatewayPort/actuator/health/readiness" -TimeoutSec 3
+                $gatewayReady = $gateway.status -eq 'UP'
+            }
             $ready = $core.status -eq 'UP' -and $web.StatusCode -eq 200 -and $homepageReady -and `
-                $revisionReady -and $webRevisionReady
+                $revisionReady -and $webRevisionReady -and $gatewayReady
             $lastReadinessStatus = "core=$($core.status), healthz=$($web.StatusCode), " +
                 "homepage=$homepageReady, revision=$([string]$build.build.revision), " +
-                "webRevision=$webRevision, expectedRevision=$buildRevision"
+                "webRevision=$webRevision, gatewayReady=$gatewayReady, expectedRevision=$buildRevision"
         }
         catch {
             $ready = $false
@@ -106,9 +146,28 @@ try {
     if (-not $ready) {
         & docker @compose ps --all
         $logServices = @('core', 'admin-web')
+        if ($deviceGatewayEnabled) { $logServices += 'device-gateway' }
         & docker @compose logs --tail 80 @logServices
         Write-Warning "Last readiness check: $lastReadinessStatus"
         throw "Services did not become ready within $TimeoutSeconds seconds. Review the container logs above."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($publicHost)) {
+        $publicReady = $false
+        $publicError = ''
+        do {
+            try {
+                $publicHealth = Invoke-WebRequest -Uri "https://$publicHost/healthz" -TimeoutSec 10 -UseBasicParsing
+                $publicReady = $publicHealth.StatusCode -eq 200
+            }
+            catch { $publicError = $_.Exception.Message }
+            if (-not $publicReady) { Start-Sleep -Seconds 2 }
+        } while (-not $publicReady -and [DateTime]::UtcNow -lt $deadline)
+        if (-not $publicReady) {
+            & docker @compose logs --no-color --tail 80 public-edge
+            throw "Local services are ready but the public HTTPS entrypoint is not reachable. Check PUBLIC_HOST DNS, inbound ports 80/443 and Caddy certificate logs. $publicError"
+        }
+        Write-Host "Public console and mini-program API: https://$publicHost" -ForegroundColor Green
     }
 
     Write-Host ''

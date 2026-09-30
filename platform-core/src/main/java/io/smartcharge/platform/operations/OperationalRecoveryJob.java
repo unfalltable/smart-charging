@@ -27,8 +27,12 @@ final class OperationalRecoveryJob {
     private Void recoverTenant(UUID tenantId) {
         List<ExpiredCommand> expired = jdbc.query("""
                 select id, order_id, connector_id, command_type
-                  from device_command where tenant_id=? and status in ('PENDING','PUBLISHED') and expires_at<=now()
-                 for update skip locked
+                  from device_command dc where tenant_id=?
+                   and ((status in ('PENDING','PUBLISHED','ACKNOWLEDGED') and expires_at<=now())
+                    or (status='FAILED' and exists (
+                         select 1 from charging_order o where o.tenant_id=dc.tenant_id and o.id=dc.order_id
+                          and o.status in ('START_PENDING','STOP_PENDING'))))
+                 order by expires_at for update skip locked limit 200
                 """, (result, row) -> new ExpiredCommand(
                 result.getObject("id", UUID.class), result.getObject("order_id", UUID.class),
                 result.getObject("connector_id", UUID.class), result.getString("command_type")), tenantId);
@@ -49,7 +53,7 @@ final class OperationalRecoveryJob {
                         """, tenantId, command.orderId());
                 if (changed == 1) {
                     jdbc.update("""
-                            update connector set status='AVAILABLE', updated_at=now(), version=version+1
+                            update connector set status='OFFLINE', last_status_at=now(), updated_at=now(), version=version+1
                              where tenant_id=? and id=? and status='RESERVED'
                             """, tenantId, command.connectorId());
                     history(tenantId, command.orderId(), "START_PENDING", "FAILED", "START_COMMAND_TIMEOUT");

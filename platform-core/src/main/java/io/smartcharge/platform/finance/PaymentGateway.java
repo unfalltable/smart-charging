@@ -3,6 +3,7 @@ package io.smartcharge.platform.finance;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 
 public interface PaymentGateway {
     boolean supports(String channel);
@@ -12,6 +13,8 @@ public interface PaymentGateway {
     GatewayRefund createRefund(GatewayRefundRequest request);
 
     GatewayPaymentStatus queryPayment(UUID tenantId, UUID merchantChannelId, String merchantOrderNo);
+
+    void closePayment(UUID tenantId, UUID merchantChannelId, String merchantOrderNo);
 
     GatewayRefundStatus queryRefund(UUID tenantId, UUID merchantChannelId, String merchantRefundNo);
 
@@ -33,19 +36,22 @@ public interface PaymentGateway {
     record GatewayPayment(UUID tenantId, UUID merchantChannelId, UUID paymentId,
                           String merchantOrderNo, long amountMinor,
                           String currency, String description, String payerSubject,
-                          boolean profitSharing) { }
+                          boolean profitSharing, Instant expiresAt) { }
     record GatewayIntent(String providerRequestId, Map<String, String> clientParameters) { }
     record GatewayRefundRequest(UUID tenantId, UUID merchantChannelId, UUID refundId, String merchantRefundNo,
                                 String providerTransactionNo, long amountMinor,
                                 long originalPaymentAmountMinor, String currency, String reason) { }
-    record GatewayRefund(String providerRefundNo, boolean completed) { }
+    record GatewayRefund(String providerRefundNo, boolean completed, Instant completedAt) { }
     enum ProviderState { SUCCEEDED, PENDING, FAILED }
-    record GatewayPaymentStatus(String providerTransactionNo, long amountMinor, ProviderState state) { }
-    record GatewayRefundStatus(String providerRefundNo, long amountMinor, ProviderState state) { }
+    record GatewayPaymentStatus(String providerTransactionNo, long amountMinor, ProviderState state,
+                                Instant completedAt) { }
+    record GatewayRefundStatus(String providerRefundNo, long amountMinor, ProviderState state,
+                               Instant completedAt) { }
     record VerifiedCallback(String providerEventId, String merchantOrderNo, String providerTransactionNo,
-                            long amountMinor, boolean succeeded, String rawPayload) { }
+                            long amountMinor, boolean succeeded, Instant completedAt, String rawPayload) { }
     record VerifiedRefundCallback(String providerEventId, String merchantRefundNo, String providerRefundNo,
-                                  long amountMinor, boolean succeeded, String rawPayload) { }
+                                  String providerTransactionNo, long amountMinor, ProviderState state,
+                                  Instant completedAt, String rawPayload) { }
     record ProfitSharingReceiver(UUID tenantId, UUID merchantChannelId, String account, String name,
                                  String relationType, String customRelation) { }
     record ProfitSharingAllocation(String account, String name, long amountMinor, String description) { }

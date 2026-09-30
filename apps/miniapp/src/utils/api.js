@@ -84,22 +84,25 @@ function rawRequest(path, options = {}) {
   })
 }
 
-function refreshSession() {
-  if (refreshInFlight) return refreshInFlight
+function refreshSession(rejectedToken) {
   const session = sessionStore.getSession()
+  if (rejectedToken && session.accessToken && session.accessToken !== rejectedToken) return Promise.resolve(session)
+  if (refreshInFlight) return refreshInFlight
   if (!session.refreshToken || !session.tenantId) {
     sessionStore.clearSession()
     return Promise.reject(new ApiError('登录已过期，请重新登录', 401, 'LOGIN_REQUIRED'))
   }
+  const version = sessionStore.getVersion()
   refreshInFlight = rawRequest('/auth/miniapp/refresh', {
     method: 'POST',
     data: { refreshToken: session.refreshToken, tenantId: session.tenantId }
   }).then((response) => {
     if (response.statusCode < 200 || response.statusCode >= 300) throw errorFromResponse(response)
+    if (version !== sessionStore.getVersion()) throw new ApiError('登录状态已变更，请重新登录', 401, 'LOGIN_REQUIRED')
     sessionStore.saveSession(response.data)
     return response.data
   }).catch((error) => {
-    sessionStore.clearSession()
+    if (error.statusCode === 401 && version === sessionStore.getVersion()) sessionStore.clearSession()
     throw error.statusCode === 401
       ? new ApiError('登录已过期，请重新登录', 401, 'LOGIN_REQUIRED')
       : error
@@ -118,10 +121,20 @@ async function request(path, options = {}) {
     ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
   }
   const response = await rawRequest(path, { method, data, headers })
+  if (auth) {
+    const current = sessionStore.getSession()
+    if (current.tenantId !== session.tenantId || current.customerId !== session.customerId) {
+      throw new ApiError('登录账号已变更，请重新操作', 401, current.accessToken ? 'SESSION_CHANGED' : 'LOGIN_REQUIRED')
+    }
+  }
   if (response.statusCode >= 200 && response.statusCode < 300) return response.data
   if (auth && retry && response.statusCode === 401) {
-    await refreshSession()
+    await refreshSession(session.accessToken)
     return request(path, { ...options, retry: false })
+  }
+  if (auth && response.statusCode === 401) {
+    if (session.accessToken === sessionStore.getSession().accessToken) sessionStore.clearSession()
+    throw new ApiError('登录已过期，请重新登录', 401, 'LOGIN_REQUIRED')
   }
   throw errorFromResponse(response)
 }

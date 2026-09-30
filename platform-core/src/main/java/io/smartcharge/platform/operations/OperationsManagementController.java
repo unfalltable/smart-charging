@@ -99,13 +99,13 @@ final class OperationsManagementController {
                      where tenant_id=? and id=?
                     """, tenantId, orderId);
             jdbc.update("""
-                    update connector set status='AVAILABLE', updated_at=now(), version=version+1
+                    update connector set status='OFFLINE', last_status_at=now(), updated_at=now(), version=version+1
                      where tenant_id=? and id=? and status='RESERVED'
                     """, tenantId, order.connectorId());
             jdbc.update("""
                     update device_command set status='EXPIRED', failure_code='ORDER_CANCELLED', updated_at=now(),
                                               version=version+1
-                     where tenant_id=? and order_id=? and status in ('PENDING','PUBLISHED')
+                     where tenant_id=? and order_id=? and status in ('PENDING','PUBLISHED','ACKNOWLEDGED')
                     """, tenantId, orderId);
             jdbc.update("""
                     insert into order_status_history
@@ -115,6 +115,44 @@ final class OperationsManagementController {
             audit.record("ORDER_CANCELLED", "charging_order", orderId,
                     Map.of("status", order.status()), Map.of("status", "CANCELLED", "reason", request.reason()));
             return Map.of("id", orderId, "status", "CANCELLED");
+        });
+    }
+
+    @PostMapping("/orders/{orderId}/stop")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    Map<String, Object> requestOrderStop(@PathVariable UUID orderId,
+                                         @Valid @RequestBody CancelOrderRequest request) {
+        UUID tenantId = TenantContext.requireTenantId();
+        return tenantJdbc.readWrite(() -> {
+            StopOrder order = jdbc.query("""
+                    select o.status,o.connector_id,c.device_id from charging_order o
+                      join connector c on c.tenant_id=o.tenant_id and c.id=o.connector_id
+                     where o.tenant_id=? and o.id=? for update of o
+                    """, (row, index) -> new StopOrder(row.getString("status"), row.getObject("connector_id", UUID.class),
+                    row.getObject("device_id", UUID.class)), tenantId, orderId).stream().findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Order does not exist"));
+            if ("STOP_PENDING".equals(order.status())) return Map.of("id", orderId, "status", "STOP_PENDING");
+            if (!"CHARGING".equals(order.status())) throw new DomainException("只有进行中的充电订单可以申请停止");
+            jdbc.update("update charging_order set status='STOP_PENDING',updated_at=now(),version=version+1 where tenant_id=? and id=?",
+                    tenantId, orderId);
+            UUID command = UUID.randomUUID();
+            String payload = "{\"orderId\":\"" + orderId + "\",\"connectorId\":\"" + order.connectorId() + "\"}";
+            jdbc.update("""
+                    insert into device_command(id,tenant_id,device_id,connector_id,order_id,command_type,status,payload,expires_at)
+                    values (?,?,?,?,?,'STOP_CHARGING','PENDING',cast(? as jsonb),now()+interval '2 minutes')
+                    """, command, tenantId, order.deviceId(), order.connectorId(), orderId, payload);
+            jdbc.update("""
+                    insert into outbox_event(id,tenant_id,aggregate_type,aggregate_id,event_type,payload,occurred_at)
+                    values (?,?,'DeviceCommand',?,'DeviceCommandRequested',cast(? as jsonb),now())
+                    """, UUID.randomUUID(), tenantId, command,
+                    "{\"commandId\":\"" + command + "\",\"deviceId\":\"" + order.deviceId() + "\"}");
+            jdbc.update("""
+                    insert into order_status_history(id,tenant_id,order_id,from_status,to_status,reason,actor_subject)
+                    values (?,?,?,'CHARGING','STOP_PENDING',?,'operator')
+                    """, UUID.randomUUID(), tenantId, orderId, request.reason());
+            audit.record("ORDER_STOP_REQUESTED", "charging_order", orderId, Map.of("status", "CHARGING"),
+                    Map.of("status", "STOP_PENDING", "reason", request.reason()));
+            return Map.of("id", orderId, "status", "STOP_PENDING");
         });
     }
 
@@ -287,6 +325,7 @@ final class OperationsManagementController {
     record TransitionWorkOrderRequest(@NotBlank String status, @Size(max = 160) String assigneeSubject,
                                       @Min(0) long version) { }
     record PendingOrder(String status, UUID connectorId) { }
+    private record StopOrder(String status, UUID connectorId, UUID deviceId) { }
     record AdminOrderView(UUID id, String orderNo, String status, String stationName, String deviceCode,
                           int connectorNo, String customerName, long energyWh, long payableAmountMinor,
                           long paidAmountMinor, String currency, Instant createdAt, Instant startedAt, Instant stoppedAt) { }

@@ -15,10 +15,12 @@ license terms.
 | Micrometer | Apache License 2.0 |
 | Lettuce | Apache License 2.0 |
 | WeChat Pay APIv3 Java SDK | Apache License 2.0 |
+| Okio | Apache License 2.0 |
 | Vue, Pinia, Element Plus, Vite, lodash | MIT License |
 | TypeScript | Apache License 2.0 |
 | Eclipse Temurin OpenJDK runtime image | GNU GPL v2 with Classpath Exception and bundled component licenses |
 | nginx container image | BSD 2-Clause License and bundled component licenses |
+| Caddy container image | Apache License 2.0 and bundled component licenses |
 | Node.js container image | MIT License and bundled component licenses |
 | PostgreSQL container image | PostgreSQL License and bundled component licenses |
 | Valkey container image | BSD 3-Clause License and bundled component licenses |
