@@ -16,7 +16,7 @@
     "vue": "3.5.43"
   },
   "devDependencies": {
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.3",
     "@vitejs/plugin-vue": "6.0.9",
     "lodash": "4.18.1",
     "typescript": "5.9.3",
